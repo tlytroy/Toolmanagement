@@ -19,10 +19,12 @@ export function CalibrationPage() {
   const [pixelRatio, setPixelRatio] = useState(0);
   const [scaleFactor, setScaleFactor] = useState(1);
   const [manualMode, setManualMode] = useState(false);
+  const [manualCorners, setManualCorners] = useState<Point[]>([]);
 
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const detectorRef = useRef<PaperDetector | null>(null);
+  const isDraggingRef = useRef<number | null>(null);
 
   // 初始化 PaperDetector
   useEffect(() => {
@@ -46,6 +48,20 @@ export function CalibrationPage() {
       img.src = imageUrl;
     }
   }, [imageUrl]);
+
+  // 初始化手动角点（如果进入手动模式但没有角点）
+  useEffect(() => {
+    if (manualMode && manualCorners.length === 0 && imageRef.current) {
+      const img = imageRef.current;
+      const corners = [
+        { x: img.width * 0.1, y: img.height * 0.1 },
+        { x: img.width * 0.9, y: img.height * 0.1 },
+        { x: img.width * 0.9, y: img.height * 0.9 },
+        { x: img.width * 0.1, y: img.height * 0.9 }
+      ];
+      setManualCorners(corners);
+    }
+  }, [manualMode, manualCorners.length]);
 
   // 自动检测纸张四角
   const handleAutoDetect = async () => {
@@ -93,24 +109,48 @@ export function CalibrationPage() {
     }
   };
 
-  // 应用手动调整（简化版本）
+  // 处理鼠标按下事件（开始拖拽角点）
+  const handleMouseDown = (index: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = index;
+  };
+
+  // 处理鼠标移动事件（拖拽角点）
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDraggingRef.current === null || !imageRef.current) return;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / scaleFactor;
+    const y = (e.clientY - rect.top) / scaleFactor;
+
+    // 确保角点在图像范围内
+    const img = imageRef.current;
+    const boundedX = Math.max(0, Math.min(img.width, x));
+    const boundedY = Math.max(0, Math.min(img.height, y));
+
+    const newCorners = [...manualCorners];
+    newCorners[isDraggingRef.current] = { x: boundedX, y: boundedY };
+    setManualCorners(newCorners);
+  };
+
+  // 处理鼠标抬起事件（结束拖拽）
+  const handleMouseUp = () => {
+    isDraggingRef.current = null;
+  };
+
+  // 应用手动调整
   const applyManualAdjustment = async () => {
-    if (!imageRef.current) return;
+    if (!imageRef.current || manualCorners.length !== 4) return;
 
     setIsProcessing(true);
     try {
-      // 使用默认的角点进行透视校正
-      const defaultCorners = [
-        { x: 100, y: 100 },
-        { x: 700, y: 100 },
-        { x: 700, y: 500 },
-        { x: 100, y: 500 }
-      ];
-
       // 应用透视校正
       const correctedImageUrl = await detectorRef.current!.applyPerspectiveCorrection(
         imageRef.current,
-        defaultCorners
+        manualCorners
       );
 
       setCalibratedImageUrl(correctedImageUrl);
@@ -246,48 +286,77 @@ export function CalibrationPage() {
                     }}
                   />
 
-                  {/* 显示检测到的角点 */}
-                  {detectionResult && (
-                    <div
-                      className="absolute inset-0 pointer-events-none"
-                      style={{
-                        transform: `scale(${scaleFactor})`,
-                        transformOrigin: 'top left'
-                      }}
-                    >
-                      {/* 角点标记 */}
-                      {detectionResult.corners.map((point, index) => (
-                        <div
-                          key={index}
-                          className="absolute w-4 h-4 rounded-full border-2 border-white bg-green-500 transform -translate-x-1/2 -translate-y-1/2"
-                          style={{
-                            left: `${point.x}px`,
-                            top: `${point.y}px`,
-                          }}
-                        />
-                      ))}
+                  {/* 显示检测到的角点或手动调整的角点 */}
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      transform: `scale(${scaleFactor})`,
+                      transformOrigin: 'top left'
+                    }}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                  >
+                    {/* 角点标记 */}
+                    {detectionResult?.corners && detectionResult.corners.map((point: Point, index: number) => (
+                      <div
+                        key={index}
+                        className="absolute w-6 h-6 rounded-full border-2 border-white bg-green-500 transform -translate-x-1/2 -translate-y-1/2 cursor-move"
+                        style={{
+                          left: `${point.x}px`,
+                          top: `${point.y}px`,
+                          zIndex: 20
+                        }}
+                        onMouseDown={(e) => handleMouseDown(index, e)}
+                      />
+                    ))}
+                    {manualMode && manualCorners.map((point: Point, index: number) => (
+                      <div
+                        key={index}
+                        className="absolute w-6 h-6 rounded-full border-2 border-white bg-blue-500 transform -translate-x-1/2 -translate-y-1/2 cursor-move"
+                        style={{
+                          left: `${point.x}px`,
+                          top: `${point.y}px`,
+                          zIndex: 20
+                        }}
+                        onMouseDown={(e) => handleMouseDown(index, e)}
+                      />
+                    ))}
 
-                      {/* 连接角点形成边框 */}
-                      <svg
-                        className="absolute top-0 left-0 w-full h-full pointer-events-none"
-                        style={{ zIndex: 10 }}
-                      >
-                        {detectionResult.corners.length === 4 && (
-                          <polygon
-                            points={`
-                              ${detectionResult.corners[0].x},${detectionResult.corners[0].y}
-                              ${detectionResult.corners[1].x},${detectionResult.corners[1].y}
-                              ${detectionResult.corners[2].x},${detectionResult.corners[2].y}
-                              ${detectionResult.corners[3].x},${detectionResult.corners[3].y}
-                            `}
-                            fill="none"
-                            stroke="green"
-                            strokeWidth="2"
-                          />
-                        )}
-                      </svg>
-                    </div>
-                  )}
+                    {/* 连接角点形成边框 */}
+                    <svg
+                      className="absolute top-0 left-0 w-full h-full pointer-events-none"
+                      style={{ zIndex: 10 }}
+                    >
+                      {detectionResult?.corners && detectionResult.corners.length === 4 && (
+                        <polygon
+                          points={`
+                            ${detectionResult.corners[0].x},${detectionResult.corners[0].y}
+                            ${detectionResult.corners[1].x},${detectionResult.corners[1].y}
+                            ${detectionResult.corners[2].x},${detectionResult.corners[2].y}
+                            ${detectionResult.corners[3].x},${detectionResult.corners[3].y}
+                          `}
+                          fill="none"
+                          stroke="green"
+                          strokeWidth="2"
+                        />
+                      )}
+                      {manualMode && manualCorners.length === 4 && (
+                        <polygon
+                          points={`
+                            ${manualCorners[0].x},${manualCorners[0].y}
+                            ${manualCorners[1].x},${manualCorners[1].y}
+                            ${manualCorners[2].x},${manualCorners[2].y}
+                            ${manualCorners[3].x},${manualCorners[3].y}
+                          `}
+                          fill="none"
+                          stroke="blue"
+                          strokeWidth="2"
+                          strokeDasharray="5,5"
+                        />
+                      )}
+                    </svg>
+                  </div>
                 </>
               ) : (
                 <div className="text-center text-gray-500">
@@ -308,14 +377,14 @@ export function CalibrationPage() {
                 </button>
                 <button
                   onClick={applyManualAdjustment}
-                  disabled={isProcessing}
+                  disabled={isProcessing || manualCorners.length !== 4}
                   className={`px-4 py-2 rounded-md font-medium ${
-                    isProcessing
+                    isProcessing || manualCorners.length !== 4
                       ? "bg-gray-300 text-gray-500 cursor-not-allowed"
                       : "bg-blue-600 text-white hover:bg-blue-700"
                   }`}
                 >
-                  {isProcessing ? "处理中..." : "应用默认调整"}
+                  {isProcessing ? "处理中..." : "应用调整"}
                 </button>
               </div>
             )}

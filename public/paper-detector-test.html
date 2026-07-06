@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PaperDetector 测试页面</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .test-area {
+      border: 1px solid #ccc;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 5px;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    #imagePreview {
+      max-width: 100%;
+      margin: 10px 0;
+    }
+    #results {
+      background-color: #f8f9fa;
+      padding: 10px;
+      border-radius: 5px;
+      margin: 10px 0;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>PaperDetector 测试页面</h1>
+
+  <div class="test-area">
+    <h2>图像上传测试</h2>
+    <input type="file" id="imageInput" accept="image/*">
+    <img id="imagePreview" style="display: none;" alt="预览图像">
+  </div>
+
+  <div class="test-area">
+    <h2>功能测试</h2>
+    <button id="initBtn">初始化 PaperDetector</button>
+    <button id="detectBtn" disabled>检测纸张四角</button>
+    <button id="resetBtn">重置</button>
+  </div>
+
+  <div class="test-area">
+    <h2>测试结果</h2>
+    <div id="results">等待测试...</div>
+  </div>
+
+  <script type="module">
+    import { PaperDetector } from '/src/utils/PaperDetector.ts';
+
+    let detector = null;
+    let currentImage = null;
+
+    const imageInput = document.getElementById('imageInput');
+    const imagePreview = document.getElementById('imagePreview');
+    const initBtn = document.getElementById('initBtn');
+    const detectBtn = document.getElementById('detectBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const resultsDiv = document.getElementById('results');
+
+    // 图像上传处理
+    imageInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          imagePreview.src = e.target.result;
+          imagePreview.style.display = 'block';
+          currentImage = new Image();
+          currentImage.src = e.target.result;
+          currentImage.onload = () => {
+            detectBtn.disabled = detector === null;
+          };
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    // 初始化 PaperDetector
+    initBtn.addEventListener('click', async () => {
+      try {
+        resultsDiv.textContent = '正在初始化 PaperDetector...';
+        detector = new PaperDetector();
+
+        // 等待初始化完成
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        resultsDiv.textContent = 'PaperDetector 初始化成功！';
+        initBtn.disabled = true;
+        detectBtn.disabled = currentImage === null;
+      } catch (error) {
+        resultsDiv.textContent = `初始化失败: ${error.message}`;
+      }
+    });
+
+    // 检测纸张四角
+    detectBtn.addEventListener('click', async () => {
+      if (!detector || !currentImage) {
+        resultsDiv.textContent = '请先初始化 PaperDetector 并上传图像';
+        return;
+      }
+
+      try {
+        resultsDiv.textContent = '正在检测纸张四角...';
+        detectBtn.disabled = true;
+
+        const corners = await detector.detectPaperCorners(currentImage);
+
+        if (corners) {
+          resultsDiv.textContent = `检测成功！\n检测到的角点坐标:\n${corners.map((point, index) =>
+            `角点 ${index + 1}: (${point.x.toFixed(2)}, ${point.y.toFixed(2)})`).join('\n')}`;
+        } else {
+          resultsDiv.textContent = '未能检测到纸张四角，请尝试手动调整';
+        }
+      } catch (error) {
+        resultsDiv.textContent = `检测失败: ${error.message}`;
+      } finally {
+        detectBtn.disabled = false;
+      }
+    });
+
+    // 重置
+    resetBtn.addEventListener('click', () => {
+      detector = null;
+      currentImage = null;
+      imageInput.value = '';
+      imagePreview.style.display = 'none';
+      initBtn.disabled = false;
+      detectBtn.disabled = true;
+      resultsDiv.textContent = '等待测试...';
+    });
+  </script>
+</body>
+</html>

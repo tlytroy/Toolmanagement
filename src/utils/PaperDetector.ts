@@ -56,83 +56,309 @@ export class PaperDetector {
       const gray = new this.cv.Mat();
       this.cv.cvtColor(processedSrc, gray, this.cv.COLOR_RGBA2GRAY);
 
-      // 高斯模糊
-      const blurred = new this.cv.Mat();
-      this.cv.GaussianBlur(gray, blurred, new this.cv.Size(5, 5), 0);
+      // 应用自适应直方图均衡化来改善对比度
+      const clahe = new this.cv.CLAHE();
+      const enhanced = new this.cv.Mat();
+      clahe.apply(gray, enhanced);
 
-      // 边缘检测
-      const edges = new this.cv.Mat();
-      this.cv.Canny(blurred, edges, 50, 150);
+      // 多种阈值方法尝试检测纸张
+      const methods = [
+        { low: 50, high: 150 },
+        { low: 30, high: 100 },
+        { low: 70, high: 200 },
+        { low: 40, high: 120 }  // 新增一种中间阈值
+      ];
 
-      // 形态学操作 - 闭运算连接边缘
-      const kernel = this.cv.Mat.ones(5, 5, this.cv.CV_8UC1);
-      const closed = new this.cv.Mat();
-      this.cv.morphologyEx(edges, closed, this.cv.MORPH_CLOSE, kernel);
+      let bestCorners: {x: number, y: number}[] | null = null;
+      let bestScore = 0;
 
-      // 查找轮廓
-      const contours = new this.cv.MatVector();
-      const hierarchy = new this.cv.Mat();
-      this.cv.findContours(closed, contours, hierarchy, this.cv.RETR_EXTERNAL, this.cv.CHAIN_APPROX_SIMPLE);
+      for (const method of methods) {
+        // 高斯模糊
+        const blurred = new this.cv.Mat();
+        this.cv.GaussianBlur(enhanced, blurred, new this.cv.Size(5, 5), 0);
 
-      // 寻找最大的四边形轮廓
-      let largestContour = null;
-      let maxArea = 0;
+        // 边缘检测
+        const edges = new this.cv.Mat();
+        this.cv.Canny(blurred, edges, method.low, method.high);
 
-      for (let i = 0; i < contours.size(); i++) {
-        const contour = contours.get(i);
-        const area = this.cv.contourArea(contour);
+        // 形态学操作 - 闭运算连接边缘
+        const kernel = this.cv.Mat.ones(5, 5, this.cv.CV_8UC1);
+        const closed = new this.cv.Mat();
+        this.cv.morphologyEx(edges, closed, this.cv.MORPH_CLOSE, kernel);
 
-        // 只考虑面积足够大的轮廓 (至少占图像的10%)
-        if (area > maxArea && area > (processedSrc.rows * processedSrc.cols * 0.1)) {
-          // 近似轮廓为多边形
-          const epsilon = 0.02 * this.cv.arcLength(contour, true);
-          const approx = new this.cv.Mat();
-          this.cv.approxPolyDP(contour, approx, epsilon, true);
+        // 查找轮廓
+        const contours = new this.cv.MatVector();
+        const hierarchy = new this.cv.Mat();
+        this.cv.findContours(closed, contours, hierarchy, this.cv.RETR_EXTERNAL, this.cv.CHAIN_APPROX_SIMPLE);
 
-          // 如果近似后是四边形
-          if (approx.rows === 4) {
-            maxArea = area;
-            largestContour = approx;
-          } else {
-            approx.delete();
+        // 寻找最佳的四边形轮廓
+        for (let i = 0; i < contours.size(); i++) {
+          const contour = contours.get(i);
+          const area = this.cv.contourArea(contour);
+
+          // 只考虑面积足够大的轮廓 (至少占图像的3%，降低要求)
+          if (area > (processedSrc.rows * processedSrc.cols * 0.03)) {
+            // 近似轮廓为多边形
+            const epsilon = 0.02 * this.cv.arcLength(contour, true);
+            const approx = new this.cv.Mat();
+            this.cv.approxPolyDP(contour, approx, epsilon, true);
+
+            // 如果近似后是四边形
+            if (approx.rows === 4) {
+              // 计算四边形的角度，判断是否接近矩形
+              const isRectangle = this.isRectangle(approx);
+              if (isRectangle) {
+                // 计算得分（基于面积和形状规则性）
+                const score = area * this.getShapeRegularityScore(approx);
+
+                if (score > bestScore) {
+                  bestScore = score;
+
+                  // 提取四角坐标
+                  const corners: {x: number, y: number}[] = [];
+                  for (let j = 0; j < approx.rows; j++) {
+                    const point = approx.ptr(j, 0);
+                    corners.push({
+                      x: point[0] / scale, // 恢复原始尺寸比例
+                      y: point[1] / scale
+                    });
+                  }
+
+                  bestCorners = this.sortCorners(corners);
+                }
+              }
+
+              approx.delete();
+            } else {
+              approx.delete();
+            }
           }
+          contour.delete();
         }
-        contour.delete();
+
+        // 清理内存
+        blurred.delete();
+        edges.delete();
+        closed.delete();
+        kernel.delete();
+        contours.delete();
+        hierarchy.delete();
+      }
+
+      // 如果还没找到，尝试更宽松的方法
+      if (!bestCorners) {
+        // 使用更宽松的阈值
+        const blurred = new this.cv.Mat();
+        this.cv.GaussianBlur(enhanced, blurred, new this.cv.Size(3, 3), 0);
+
+        // 尝试不同的边缘检测参数
+        const edges = new this.cv.Mat();
+        this.cv.Canny(blurred, edges, 20, 80);
+
+        // 更强的形态学操作
+        const kernel = this.cv.Mat.ones(7, 7, this.cv.CV_8UC1);
+        const closed = new this.cv.Mat();
+        this.cv.morphologyEx(edges, closed, this.cv.MORPH_CLOSE, kernel);
+        this.cv.morphologyEx(closed, closed, this.cv.MORPH_OPEN, this.cv.Mat.ones(3, 3, this.cv.CV_8UC1));
+
+        // 查找轮廓
+        const contours = new this.cv.MatVector();
+        const hierarchy = new this.cv.Mat();
+        this.cv.findContours(closed, contours, hierarchy, this.cv.RETR_EXTERNAL, this.cv.CHAIN_APPROX_SIMPLE);
+
+        // 寻找四边形轮廓
+        for (let i = 0; i < contours.size(); i++) {
+          const contour = contours.get(i);
+          const area = this.cv.contourArea(contour);
+
+          // 更宽松的面积要求 (至少占图像的2%)
+          if (area > (processedSrc.rows * processedSrc.cols * 0.02)) {
+            // 近似轮廓为多边形
+            const epsilon = 0.03 * this.cv.arcLength(contour, true);  // 更宽松的近似
+            const approx = new this.cv.Mat();
+            this.cv.approxPolyDP(contour, approx, epsilon, true);
+
+            // 如果近似后是四边形
+            if (approx.rows === 4) {
+              // 更宽松的矩形判断
+              const isRectangle = this.isRectangleRelaxed(approx);
+              if (isRectangle) {
+                // 提取四角坐标
+                const corners: {x: number, y: number}[] = [];
+                for (let j = 0; j < approx.rows; j++) {
+                  const point = approx.ptr(j, 0);
+                  corners.push({
+                    x: point[0] / scale, // 恢复原始尺寸比例
+                    y: point[1] / scale
+                  });
+                }
+
+                bestCorners = this.sortCorners(corners);
+                approx.delete();
+                contour.delete();
+                break;
+              }
+              approx.delete();
+            } else {
+              approx.delete();
+            }
+          }
+          contour.delete();
+        }
+
+        // 清理内存
+        blurred.delete();
+        edges.delete();
+        closed.delete();
+        kernel.delete();
+        contours.delete();
+        hierarchy.delete();
       }
 
       // 清理内存
       src.delete();
       if (processedSrc !== src) processedSrc.delete();
       gray.delete();
-      blurred.delete();
-      edges.delete();
-      closed.delete();
-      kernel.delete();
-      contours.delete();
-      hierarchy.delete();
+      enhanced.delete();
 
-      if (largestContour) {
-        // 提取四角坐标
-        const corners: {x: number, y: number}[] = [];
-        for (let i = 0; i < largestContour.rows; i++) {
-          const point = largestContour.ptr(i, 0);
-          corners.push({
-            x: point[0] / scale, // 恢复原始尺寸比例
-            y: point[1] / scale
-          });
-        }
-
-        largestContour.delete();
-
-        // 按顺时针排序角点（左上，右上，右下，左下）
-        return this.sortCorners(corners);
-      }
-
-      return null;
+      return bestCorners;
     } catch (error) {
       console.error("Paper detection failed:", error);
       return null;
     }
+  }
+
+  /**
+   * 判断四边形是否接近矩形 (标准版)
+   * @param contour 四边形轮廓
+   * @returns 是否接近矩形
+   */
+  private isRectangle(contour: any): boolean {
+    if (contour.rows !== 4) return false;
+
+    // 获取四个顶点
+    const points: {x: number, y: number}[] = [];
+    for (let i = 0; i < contour.rows; i++) {
+      const point = contour.ptr(i, 0);
+      points.push({x: point[0], y: point[1]});
+    }
+
+    // 计算四条边的长度
+    const distances: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % 4];
+      const distance = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+      distances.push(distance);
+    }
+
+    // 计算对角线长度
+    const diagonal1 = Math.sqrt(Math.pow(points[2].x - points[0].x, 2) + Math.pow(points[2].y - points[0].y, 2));
+    const diagonal2 = Math.sqrt(Math.pow(points[3].x - points[1].x, 2) + Math.pow(points[3].y - points[1].y, 2));
+
+    // 检查对边是否相等（平行四边形）
+    const oppositeSidesEqual =
+      Math.abs(distances[0] - distances[2]) < Math.min(distances[0], distances[2]) * 0.3 &&
+      Math.abs(distances[1] - distances[3]) < Math.min(distances[1], distances[3]) * 0.3;
+
+    // 检查对角线是否相等（矩形）
+    const diagonalsEqual = Math.abs(diagonal1 - diagonal2) < Math.max(diagonal1, diagonal2) * 0.1;
+
+    return oppositeSidesEqual && diagonalsEqual;
+  }
+
+  /**
+   * 判断四边形是否接近矩形 (宽松版)
+   * @param contour 四边形轮廓
+   * @returns 是否接近矩形
+   */
+  private isRectangleRelaxed(contour: any): boolean {
+    if (contour.rows !== 4) return false;
+
+    // 获取四个顶点
+    const points: {x: number, y: number}[] = [];
+    for (let i = 0; i < contour.rows; i++) {
+      const point = contour.ptr(i, 0);
+      points.push({x: point[0], y: point[1]});
+    }
+
+    // 计算四条边的长度
+    const distances: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % 4];
+      const distance = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+      distances.push(distance);
+    }
+
+    // 计算对角线长度
+    const diagonal1 = Math.sqrt(Math.pow(points[2].x - points[0].x, 2) + Math.pow(points[2].y - points[0].y, 2));
+    const diagonal2 = Math.sqrt(Math.pow(points[3].x - points[1].x, 2) + Math.pow(points[3].y - points[1].y, 2));
+
+    // 更宽松的检查对边是否相等
+    const oppositeSidesEqual =
+      Math.abs(distances[0] - distances[2]) < Math.min(distances[0], distances[2]) * 0.5 &&
+      Math.abs(distances[1] - distances[3]) < Math.min(distances[1], distances[3]) * 0.5;
+
+    // 更宽松的检查对角线是否相等
+    const diagonalsEqual = Math.abs(diagonal1 - diagonal2) < Math.max(diagonal1, diagonal2) * 0.2;
+
+    return oppositeSidesEqual && diagonalsEqual;
+  }
+
+  /**
+   * 计算形状规则性得分
+   * @param contour 四边形轮廓
+   * @returns 规则性得分 (0-1)
+   */
+  private getShapeRegularityScore(contour: any): number {
+    if (contour.rows !== 4) return 0;
+
+    // 获取四个顶点
+    const points: {x: number, y: number}[] = [];
+    for (let i = 0; i < contour.rows; i++) {
+      const point = contour.ptr(i, 0);
+      points.push({x: point[0], y: point[1]});
+    }
+
+    // 计算四条边的长度
+    const distances: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % 4];
+      const distance = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+      distances.push(distance);
+    }
+
+    // 计算角度
+    const angles: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p1 = points[(i + 3) % 4];
+      const p2 = points[i];
+      const p3 = points[(i + 1) % 4];
+
+      const v1 = {x: p1.x - p2.x, y: p1.y - p2.y};
+      const v2 = {x: p3.x - p2.x, y: p3.y - p2.y};
+
+      const dot = v1.x * v2.x + v1.y * v2.y;
+      const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
+      const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
+
+      const angle = Math.acos(dot / (mag1 * mag2));
+      angles.push(angle);
+    }
+
+    // 计算边长变化系数（越接近正方形得分越高）
+    const avgDistance = distances.reduce((a, b) => a + b, 0) / distances.length;
+    const distanceVariance = distances.reduce((sum, d) => sum + Math.pow(d - avgDistance, 2), 0) / distances.length;
+    const distanceScore = 1 / (1 + distanceVariance / (avgDistance * avgDistance));
+
+    // 计算角度接近90度的得分
+    const rightAngle = Math.PI / 2;
+    const angleDeviation = angles.reduce((sum, angle) => sum + Math.pow(angle - rightAngle, 2), 0);
+    const angleScore = 1 / (1 + angleDeviation);
+
+    return (distanceScore + angleScore) / 2;
   }
 
   /**
