@@ -1,6 +1,6 @@
 module.exports = {
   preset: 'ts-jest',
-  testEnvironment: 'node',
+  testEnvironment: 'jsdom',
   roots: ['<rootDir>'],
   testMatch: [
     '<rootDir>/__tests__/**/*.{js,jsx,ts,tsx}',

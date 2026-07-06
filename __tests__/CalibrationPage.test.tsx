@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
 import { CalibrationPage } from '../src/features/calibration/CalibrationPage';
 
 // Mock the store
@@ -33,8 +34,8 @@ describe('CalibrationPage', () => {
     expect(screen.getByText('纸张检测与标定')).toBeInTheDocument();
   });
 
-  test('should have manual adjustment controls', () => {
+  test('should have manual marking button', () => {
     render(<CalibrationPage />);
-    expect(screen.getByText('手动调整边界')).toBeInTheDocument();
+    expect(screen.getByText('手动标记角点')).toBeInTheDocument();
   });
 });

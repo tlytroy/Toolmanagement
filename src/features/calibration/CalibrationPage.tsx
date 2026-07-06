@@ -1,11 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "@/app/store";
-import { PaperDetector } from "@/utils/PaperDetector";
-
-interface Point {
-  x: number;
-  y: number;
-}
+import { PaperDetector, DetectionDebugInfo } from "@/utils/PaperDetector";
+import type { Point } from "@/utils/types";
 
 export function CalibrationPage() {
   const setStep = useStore((s) => s.setStep);
@@ -14,12 +10,18 @@ export function CalibrationPage() {
   const setCalibratedImageUrl = useStore((s) => s.setCalibratedImageUrl);
 
   const [isProcessing, setIsProcessing] = useState(false);
-  const [detectionResult, setDetectionResult] = useState<{ corners: Point[]; success: boolean } | null>(null);
+  const [detectionResult, setDetectionResult] = useState<{
+    corners: Point[];
+    success: boolean;
+  } | null>(null);
   const [paperFormat, setPaperFormat] = useState("A4");
   const [pixelRatio, setPixelRatio] = useState(0);
   const [scaleFactor, setScaleFactor] = useState(1);
   const [manualMode, setManualMode] = useState(false);
   const [manualCorners, setManualCorners] = useState<Point[]>([]);
+  const [debugImages, setDebugImages] = useState<DetectionDebugInfo[]>([]);
+  const [failureReason, setFailureReason] = useState<string | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -36,12 +38,13 @@ export function CalibrationPage() {
     if (imageUrl && containerRef.current) {
       const img = new Image();
       img.onload = () => {
-        const containerWidth = containerRef.current!.clientWidth;
-        const containerHeight = containerRef.current!.clientHeight;
+        if (!containerRef.current) return;
+        const containerWidth = containerRef.current.clientWidth;
+        const containerHeight = containerRef.current.clientHeight;
         const scale = Math.min(
           containerWidth / img.width,
           containerHeight / img.height,
-          1 // 不放大图片
+          1
         );
         setScaleFactor(scale);
       };
@@ -49,85 +52,94 @@ export function CalibrationPage() {
     }
   }, [imageUrl]);
 
-  // 初始化手动角点（如果进入手动模式但没有角点）
+  // 初始化手动角点
   useEffect(() => {
     if (manualMode && manualCorners.length === 0 && imageRef.current) {
       const img = imageRef.current;
-      const corners = [
-        { x: img.width * 0.1, y: img.height * 0.1 },
-        { x: img.width * 0.9, y: img.height * 0.1 },
-        { x: img.width * 0.9, y: img.height * 0.9 },
-        { x: img.width * 0.1, y: img.height * 0.9 }
-      ];
-      setManualCorners(corners);
+      setManualCorners([
+        { x: img.width * 0.15, y: img.height * 0.15 },
+        { x: img.width * 0.85, y: img.height * 0.15 },
+        { x: img.width * 0.85, y: img.height * 0.85 },
+        { x: img.width * 0.15, y: img.height * 0.85 },
+      ]);
     }
   }, [manualMode, manualCorners.length]);
 
   // 自动检测纸张四角
   const handleAutoDetect = async () => {
-    if (!imageUrl) {
-      alert("请先上传图片");
-      return;
-    }
-
-    if (!imageRef.current) {
-      alert("图片未加载完成，请稍后重试");
-      return;
-    }
+    if (!imageUrl) return;
+    if (!imageRef.current) return;
 
     setIsProcessing(true);
-    try {
-      // 使用真实的 OpenCV.js 纸张检测功能
-      const corners = await detectorRef.current!.detectPaperCorners(imageRef.current);
+    setFailureReason(null);
+    setDebugImages([]);
 
-      if (corners && corners.length === 4) {
-        setDetectionResult({ corners, success: true });
+    try {
+      const result = await detectorRef.current!.detectPaperCorners(
+        imageRef.current,
+        true // 启用 debug
+      );
+
+      setDebugImages(result.debugInfo);
+
+      if (result.corners && result.corners.length === 4) {
+        setDetectionResult({ corners: result.corners, success: true });
 
         // 应用透视校正
         const correctedImageUrl = await detectorRef.current!.applyPerspectiveCorrection(
           imageRef.current,
-          corners
+          result.corners,
+          paperFormat
         );
-
         setCalibratedImageUrl(correctedImageUrl);
 
-        // 计算像素比例
         const ratio = detectorRef.current!.calculatePixelRatio(paperFormat);
         setPixelRatio(ratio);
-
-        alert(`纸张检测完成！\n检测到纸张四角并完成透视校正。\n像素比例: ${ratio.toFixed(2)} pixels/mm`);
+        setManualMode(false);
       } else {
         setManualMode(true);
-        alert("未能自动检测到完整的纸张轮廓，请手动调整纸张边界。");
+        // 显示诊断信息
+        const lastInfo = result.debugInfo[result.debugInfo.length - 1];
+        if (lastInfo?.reason) {
+          setFailureReason(lastInfo.reason);
+        }
       }
     } catch (error) {
       console.error("纸张检测失败:", error);
       setManualMode(true);
-      alert("自动检测失败，请手动调整纸张边界。");
+      setFailureReason(`检测出错: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // 处理鼠标按下事件（开始拖拽角点）
+  // 拖拽相关
   const handleMouseDown = (index: number, e: React.MouseEvent) => {
     e.preventDefault();
     isDraggingRef.current = index;
   };
 
-  // 处理鼠标移动事件（拖拽角点）
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isDraggingRef.current === null || !imageRef.current) return;
-
     const container = containerRef.current;
     if (!container) return;
 
     const rect = container.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / scaleFactor;
-    const y = (e.clientY - rect.top) / scaleFactor;
+    // 获取鼠标相对于容器的位置
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
 
-    // 确保角点在图像范围内
+    // 获取图片在容器中的偏移（居中布局）
     const img = imageRef.current;
+    const imgDisplayWidth = img.width * scaleFactor;
+    const imgDisplayHeight = img.height * scaleFactor;
+    const offsetX = (container.clientWidth - imgDisplayWidth) / 2;
+    const offsetY = (container.clientHeight - imgDisplayHeight) / 2;
+
+    // 转换到原始图片坐标
+    const x = Math.round((mouseX - offsetX) / scaleFactor);
+    const y = Math.round((mouseY - offsetY) / scaleFactor);
+
     const boundedX = Math.max(0, Math.min(img.width, x));
     const boundedY = Math.max(0, Math.min(img.height, y));
 
@@ -136,7 +148,6 @@ export function CalibrationPage() {
     setManualCorners(newCorners);
   };
 
-  // 处理鼠标抬起事件（结束拖拽）
   const handleMouseUp = () => {
     isDraggingRef.current = null;
   };
@@ -147,23 +158,19 @@ export function CalibrationPage() {
 
     setIsProcessing(true);
     try {
-      // 应用透视校正
       const correctedImageUrl = await detectorRef.current!.applyPerspectiveCorrection(
         imageRef.current,
-        manualCorners
+        manualCorners,
+        paperFormat
       );
-
       setCalibratedImageUrl(correctedImageUrl);
+      setDetectionResult({ corners: manualCorners, success: true });
 
-      // 计算像素比例
       const ratio = detectorRef.current!.calculatePixelRatio(paperFormat);
       setPixelRatio(ratio);
-
       setManualMode(false);
-      alert(`手动调整完成！\n透视校正已完成。\n像素比例: ${ratio.toFixed(2)} pixels/mm`);
     } catch (error) {
       console.error("手动调整失败:", error);
-      alert("手动调整失败，请重试。");
     } finally {
       setIsProcessing(false);
     }
@@ -173,11 +180,29 @@ export function CalibrationPage() {
     setStep("segmentation");
   };
 
+  // 将原始图片坐标转换为显示坐标
+  const toDisplayCoords = (point: Point) => {
+    const img = imageRef.current;
+    if (!img) return { left: 0, top: 0 };
+
+    const imgDisplayWidth = img.width * scaleFactor;
+    const imgDisplayHeight = img.height * scaleFactor;
+    const offsetX = (containerRef.current?.clientWidth || 0 - imgDisplayWidth) / 2;
+    const offsetY = (containerRef.current?.clientHeight || 0 - imgDisplayHeight) / 2;
+
+    return {
+      left: offsetX + point.x * scaleFactor,
+      top: offsetY + point.y * scaleFactor,
+    };
+  };
+
   const paperSizes = {
     A4: { width: 210, height: 297, label: "A4 (210×297mm)" },
     Letter: { width: 215.9, height: 279.4, label: "Letter (215.9×279.4mm)" },
-    A5: { width: 148, height: 210, label: "A5 (148×210mm)" }
+    A5: { width: 148, height: 210, label: "A5 (148×210mm)" },
   };
+
+  const cornersToShow = manualMode ? manualCorners : (detectionResult?.corners ?? []);
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -185,227 +210,194 @@ export function CalibrationPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：控制面板 */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-lg font-semibold mb-4 text-gray-700">纸张规格</h3>
+        <div className="lg:col-span-1 space-y-4">
+          <div className="bg-white rounded-lg shadow p-4">
+            <h3 className="text-base font-semibold mb-3 text-gray-700">纸张规格</h3>
+            <select
+              className="w-full p-2 border rounded text-sm"
+              value={paperFormat}
+              onChange={(e) => setPaperFormat(e.target.value)}
+            >
+              <option value="A4">{paperSizes.A4.label}</option>
+              <option value="Letter">{paperSizes.Letter.label}</option>
+              <option value="A5">{paperSizes.A5.label}</option>
+            </select>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">纸张类型</label>
-                <select
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  value={paperFormat}
-                  onChange={(e) => setPaperFormat(e.target.value)}
-                >
-                  <option value="A4">{paperSizes.A4.label}</option>
-                  <option value="Letter">{paperSizes.Letter.label}</option>
-                  <option value="A5">{paperSizes.A5.label}</option>
-                </select>
+            {pixelRatio > 0 && (
+              <div className="mt-2 p-2 bg-blue-50 rounded text-xs text-blue-800">
+                标定: 1mm = {pixelRatio.toFixed(2)} px
               </div>
-
-              {pixelRatio > 0 && (
-                <div className="p-3 bg-blue-50 rounded-md">
-                  <p className="text-sm text-blue-800">
-                    <span className="font-medium">标定信息:</span> 1mm = {pixelRatio.toFixed(2)} pixels
-                  </p>
-                </div>
-              )}
-            </div>
+            )}
           </div>
 
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-lg font-semibold mb-4 text-gray-700">检测控制</h3>
+          <div className="bg-white rounded-lg shadow p-4 space-y-3">
+            <button
+              onClick={handleAutoDetect}
+              disabled={isProcessing || !imageUrl}
+              className={`w-full py-2.5 rounded text-sm font-medium transition ${
+                isProcessing || !imageUrl
+                  ? "bg-gray-200 text-gray-400"
+                  : "bg-blue-600 text-white hover:bg-blue-700"
+              }`}
+            >
+              {isProcessing ? "检测中..." : "自动检测纸张"}
+            </button>
 
-            <div className="space-y-4">
-              <button
-                onClick={handleAutoDetect}
-                disabled={isProcessing || !imageUrl}
-                className={`w-full py-3 px-4 rounded-md font-medium transition-colors ${
-                  isProcessing || !imageUrl
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                    : "bg-blue-600 text-white hover:bg-blue-700"
-                }`}
-              >
-                {isProcessing ? "检测中..." : "自动检测纸张"}
-              </button>
+            <button
+              onClick={() => {
+                setManualMode(true);
+                setFailureReason(null);
+              }}
+              disabled={!imageUrl}
+              className={`w-full py-2.5 rounded text-sm font-medium transition ${
+                !imageUrl
+                  ? "bg-gray-200 text-gray-400"
+                  : "bg-gray-600 text-white hover:bg-gray-700"
+              }`}
+            >
+              手动标记角点
+            </button>
 
-              <button
-                onClick={() => setManualMode(true)}
-                disabled={!imageUrl}
-                className={`w-full py-3 px-4 rounded-md font-medium transition-colors ${
-                  !imageUrl
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                    : "bg-gray-600 text-white hover:bg-gray-700"
-                }`}
-              >
-                手动调整边界
-              </button>
-            </div>
+            <button
+              onClick={() => setShowDebug(!showDebug)}
+              className="w-full py-2 border rounded text-xs text-gray-500 hover:bg-gray-50"
+            >
+              {showDebug ? "隐藏调试信息" : "显示调试信息"}
+            </button>
           </div>
 
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-lg font-semibold mb-4 text-gray-700">操作指南</h3>
-            <ul className="space-y-2 text-sm text-gray-600">
-              <li className="flex items-start">
-                <span className="text-blue-500 mr-2">•</span>
-                <span>系统会自动检测纸张四角并进行透视校正</span>
-              </li>
-              <li className="flex items-start">
-                <span className="text-blue-500 mr-2">•</span>
-                <span>如果自动检测失败，可以手动调整边界</span>
-              </li>
-              <li className="flex items-start">
-                <span className="text-blue-500 mr-2">•</span>
-                <span>选择正确的纸张类型以获得准确的尺寸标定</span>
-              </li>
-            </ul>
+          {/* 失败原因提示 */}
+          {failureReason && (
+            <div className="bg-red-50 border border-red-200 rounded p-3 text-xs text-red-700">
+              <p className="font-medium mb-1">检测失败原因：</p>
+              <p>{failureReason}</p>
+            </div>
+          )}
+
+          {/* 操作提示 */}
+          <div className="bg-white rounded-lg shadow p-4 text-xs text-gray-500 space-y-1">
+            <p>• 把工具放在白纸上，俯拍照片</p>
+            <p>• 纸张应占画面至少 10%</p>
+            <p>• 纸张和背景要有明显色差</p>
+            <p>• 自动检测失败可手动标记四角</p>
           </div>
         </div>
 
         {/* 右侧：图片显示区域 */}
-        <div className="lg:col-span-2">
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-lg font-semibold mb-4 text-gray-700">
-              {manualMode ? "手动调整纸张边界" : "纸张检测预览"}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="bg-white rounded-lg shadow p-4">
+            <h3 className="text-base font-semibold mb-3 text-gray-700">
+              {manualMode ? "手动标记四角" : "纸张检测预览"}
             </h3>
 
             <div
               ref={containerRef}
-              className="relative w-full h-[500px] bg-gray-100 rounded-lg overflow-hidden border border-gray-300 flex items-center justify-center"
+              className="relative w-full h-[500px] bg-gray-100 rounded overflow-hidden border flex items-center justify-center"
+              onMouseMove={manualMode ? handleMouseMove : undefined}
+              onMouseUp={manualMode ? handleMouseUp : undefined}
+              onMouseLeave={manualMode ? handleMouseUp : undefined}
             >
               {imageUrl ? (
-                <>
-                  <img
-                    ref={imageRef}
-                    src={calibratedImageUrl || imageUrl}
-                    alt="Uploaded tool"
-                    className="max-w-full max-h-full object-contain"
-                    style={{
-                      transform: `scale(${scaleFactor})`,
-                      transformOrigin: 'top left'
-                    }}
-                  />
-
-                  {/* 显示检测到的角点或手动调整的角点 */}
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      transform: `scale(${scaleFactor})`,
-                      transformOrigin: 'top left'
-                    }}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUp}
-                    onMouseLeave={handleMouseUp}
-                  >
-                    {/* 角点标记 */}
-                    {detectionResult?.corners && detectionResult.corners.map((point: Point, index: number) => (
-                      <div
-                        key={index}
-                        className="absolute w-6 h-6 rounded-full border-2 border-white bg-green-500 transform -translate-x-1/2 -translate-y-1/2 cursor-move"
-                        style={{
-                          left: `${point.x}px`,
-                          top: `${point.y}px`,
-                          zIndex: 20
-                        }}
-                        onMouseDown={(e) => handleMouseDown(index, e)}
-                      />
-                    ))}
-                    {manualMode && manualCorners.map((point: Point, index: number) => (
-                      <div
-                        key={index}
-                        className="absolute w-6 h-6 rounded-full border-2 border-white bg-blue-500 transform -translate-x-1/2 -translate-y-1/2 cursor-move"
-                        style={{
-                          left: `${point.x}px`,
-                          top: `${point.y}px`,
-                          zIndex: 20
-                        }}
-                        onMouseDown={(e) => handleMouseDown(index, e)}
-                      />
-                    ))}
-
-                    {/* 连接角点形成边框 */}
-                    <svg
-                      className="absolute top-0 left-0 w-full h-full pointer-events-none"
-                      style={{ zIndex: 10 }}
-                    >
-                      {detectionResult?.corners && detectionResult.corners.length === 4 && (
-                        <polygon
-                          points={`
-                            ${detectionResult.corners[0].x},${detectionResult.corners[0].y}
-                            ${detectionResult.corners[1].x},${detectionResult.corners[1].y}
-                            ${detectionResult.corners[2].x},${detectionResult.corners[2].y}
-                            ${detectionResult.corners[3].x},${detectionResult.corners[3].y}
-                          `}
-                          fill="none"
-                          stroke="green"
-                          strokeWidth="2"
-                        />
-                      )}
-                      {manualMode && manualCorners.length === 4 && (
-                        <polygon
-                          points={`
-                            ${manualCorners[0].x},${manualCorners[0].y}
-                            ${manualCorners[1].x},${manualCorners[1].y}
-                            ${manualCorners[2].x},${manualCorners[2].y}
-                            ${manualCorners[3].x},${manualCorners[3].y}
-                          `}
-                          fill="none"
-                          stroke="blue"
-                          strokeWidth="2"
-                          strokeDasharray="5,5"
-                        />
-                      )}
-                    </svg>
-                  </div>
-                </>
+                <img
+                  ref={imageRef}
+                  src={calibratedImageUrl || imageUrl}
+                  alt="Uploaded"
+                  className="max-w-full max-h-full object-contain"
+                  style={{ cursor: manualMode ? "crosshair" : "default" }}
+                />
               ) : (
-                <div className="text-center text-gray-500">
-                  <p>请先上传图片</p>
+                <p className="text-gray-400 text-sm">请先上传图片</p>
+              )}
+
+              {/* 角点标记层 */}
+              {imageUrl && cornersToShow.length === 4 && imageRef.current && (
+                <svg
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ zIndex: 10 }}
+                >
+                  <polygon
+                    points={cornersToShow
+                      .map((p) => toDisplayCoords(p))
+                      .map((d) => `${d.left},${d.top}`)
+                      .join(" ")}
+                    fill="rgba(0,200,0,0.1)"
+                    stroke={manualMode ? "#3b82f6" : "#22c55e"}
+                    strokeWidth="2"
+                    strokeDasharray={manualMode ? "6,3" : "none"}
+                  />
+                </svg>
+              )}
+
+              {/* 角点圆点 */}
+              {imageUrl && cornersToShow.length === 4 && imageRef.current && (
+                <div className="absolute inset-0" style={{ zIndex: 20 }}>
+                  {cornersToShow.map((point, index) => {
+                    const d = toDisplayCoords(point);
+                    return (
+                      <div
+                        key={index}
+                        className={`absolute w-5 h-5 rounded-full border-2 border-white shadow cursor-pointer
+                          ${manualMode ? "bg-blue-500 hover:bg-blue-600" : "bg-green-500"}
+                        `}
+                        style={{
+                          left: d.left - 10,
+                          top: d.top - 10,
+                          pointerEvents: manualMode ? "auto" : "none",
+                        }}
+                        onMouseDown={manualMode ? (e) => handleMouseDown(index, e) : undefined}
+                      >
+                        <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-xs font-bold text-white">
+                          {["TL", "TR", "BR", "BL"][index]}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* 手动调整模式下的操作按钮 */}
+            {/* 手动模式按钮 */}
             {manualMode && (
-              <div className="mt-4 flex justify-end space-x-3">
+              <div className="mt-3 flex justify-end gap-3">
                 <button
-                  onClick={() => setManualMode(false)}
-                  disabled={isProcessing}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  onClick={() => {
+                    setManualMode(false);
+                    setManualCorners([]);
+                  }}
+                  className="px-4 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50"
                 >
                   取消
                 </button>
                 <button
                   onClick={applyManualAdjustment}
                   disabled={isProcessing || manualCorners.length !== 4}
-                  className={`px-4 py-2 rounded-md font-medium ${
+                  className={`px-4 py-2 rounded text-sm font-medium ${
                     isProcessing || manualCorners.length !== 4
-                      ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                      ? "bg-gray-200 text-gray-400"
                       : "bg-blue-600 text-white hover:bg-blue-700"
                   }`}
                 >
-                  {isProcessing ? "处理中..." : "应用调整"}
+                  {isProcessing ? "处理中..." : "应用标记"}
                 </button>
               </div>
             )}
 
-            {/* 下一步按钮 */}
+            {/* 非手动模式下的导航按钮 */}
             {!manualMode && (
-              <div className="mt-6 flex justify-between">
+              <div className="mt-4 flex justify-between">
                 <button
                   onClick={() => setStep("upload")}
-                  className="px-6 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                  className="px-4 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50"
                 >
                   上一步
                 </button>
-
                 <button
                   onClick={handleNext}
                   disabled={!calibratedImageUrl}
-                  className={`px-6 py-2 rounded-md font-medium ${
+                  className={`px-4 py-2 rounded text-sm font-medium ${
                     calibratedImageUrl
                       ? "bg-blue-600 text-white hover:bg-blue-700"
-                      : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                      : "bg-gray-200 text-gray-400"
                   }`}
                 >
                   下一步：AI 工具轮廓提取
@@ -413,6 +405,29 @@ export function CalibrationPage() {
               </div>
             )}
           </div>
+
+          {/* 调试信息区域 */}
+          {showDebug && debugImages.length > 0 && (
+            <div className="bg-white rounded-lg shadow p-4">
+              <h3 className="text-base font-semibold mb-3 text-gray-700">检测调试信息</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {debugImages
+                  .filter((info) => info.thresholdImage)
+                  .map((info, index) => (
+                    <div key={index} className="text-center">
+                      <img
+                        src={info.thresholdImage}
+                        alt={info.strategy}
+                        className="w-full h-auto rounded border"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        {info.strategy} ({info.candidateCount} 个候选)
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

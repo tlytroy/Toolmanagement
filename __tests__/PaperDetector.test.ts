@@ -7,13 +7,13 @@ describe('PaperDetector', () => {
     }).not.toThrow();
   });
 
-  test('should have isRectangle method', () => {
+  test('should have detectPaperCorners method', () => {
     const detector = new PaperDetector();
-    expect(typeof (detector as any).isRectangle).toBe('function');
+    expect(typeof (detector as any).detectPaperCorners).toBe('function');
   });
 
-  test('should have getShapeRegularityScore method', () => {
+  test('should have applyPerspectiveCorrection method', () => {
     const detector = new PaperDetector();
-    expect(typeof (detector as any).getShapeRegularityScore).toBe('function');
+    expect(typeof (detector as any).applyPerspectiveCorrection).toBe('function');
   });
 });
