@@ -1,5 +1,5 @@
 // 纸张检测功能实现
-import { Point } from "./types";
+import * as cv from '@techstark/opencv-js';
 
 export class PaperDetector {
   private cv: any = null;
@@ -10,44 +10,12 @@ export class PaperDetector {
 
   private async init() {
     try {
-      // 动态导入 OpenCV.js
-      if (!window.cv) {
-        await this.loadOpenCV();
-      }
-      this.cv = window.cv;
+      // 初始化 OpenCV.js
+      this.cv = cv;
       console.log("OpenCV.js initialized successfully");
     } catch (error) {
       console.error("Failed to initialize OpenCV.js:", error);
     }
-  }
-
-  private loadOpenCV(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "/opencv.js";
-      script.async = true;
-      script.onload = () => {
-        // 等待 OpenCV 完全初始化
-        const check = setInterval(() => {
-          if (window.cv && window.cv.Mat) {
-            clearInterval(check);
-            resolve();
-          }
-        }, 100);
-
-        // 超时处理
-        setTimeout(() => {
-          clearInterval(check);
-          if (window.cv && window.cv.Mat) {
-            resolve();
-          } else {
-            reject(new Error("OpenCV.js loading timeout"));
-          }
-        }, 10000);
-      };
-      script.onerror = () => reject(new Error("Failed to load OpenCV.js"));
-      document.head.appendChild(script);
-    });
   }
 
   /**
@@ -55,7 +23,7 @@ export class PaperDetector {
    * @param imageElement HTMLImageElement
    * @returns 纸张四角坐标
    */
-  async detectPaperCorners(imageElement: HTMLImageElement): Promise<Point[] | null> {
+  async detectPaperCorners(imageElement: HTMLImageElement): Promise<{x: number, y: number}[] | null> {
     if (!this.cv) {
       throw new Error("OpenCV.js not initialized");
     }
@@ -63,26 +31,30 @@ export class PaperDetector {
     try {
       // 创建源图像矩阵
       const src = this.cv.imread(imageElement);
-      const originalSize = new this.cv.Size(src.cols, src.rows);
 
-      // 调整图像大小以提高处理速度
-      const maxSize = 800;
+      // 保存原始尺寸
+      const originalWidth = src.cols;
+      const originalHeight = src.rows;
+
+      // 为了提高处理速度，调整图像大小
+      let processedSrc = src;
       let scale = 1;
-      if (Math.max(src.cols, src.rows) > maxSize) {
-        scale = maxSize / Math.max(src.cols, src.rows);
+
+      // 如果图像太大，缩小处理
+      const maxSize = 800;
+      if (Math.max(originalWidth, originalHeight) > maxSize) {
+        scale = maxSize / Math.max(originalWidth, originalHeight);
         const newSize = new this.cv.Size(
-          Math.round(src.cols * scale),
-          Math.round(src.rows * scale)
+          Math.round(originalWidth * scale),
+          Math.round(originalHeight * scale)
         );
-        const resized = new this.cv.Mat();
-        this.cv.resize(src, resized, newSize, 0, 0, this.cv.INTER_AREA);
-        src.delete();
-        // 继续使用 resized 作为 src
+        processedSrc = new this.cv.Mat();
+        this.cv.resize(src, processedSrc, newSize, 0, 0, this.cv.INTER_AREA);
       }
 
       // 转换为灰度图
       const gray = new this.cv.Mat();
-      this.cv.cvtColor(src, gray, this.cv.COLOR_RGBA2GRAY);
+      this.cv.cvtColor(processedSrc, gray, this.cv.COLOR_RGBA2GRAY);
 
       // 高斯模糊
       const blurred = new this.cv.Mat();
@@ -110,8 +82,8 @@ export class PaperDetector {
         const contour = contours.get(i);
         const area = this.cv.contourArea(contour);
 
-        // 只考虑面积足够大的轮廓
-        if (area > maxArea && area > (src.rows * src.cols * 0.1)) {
+        // 只考虑面积足够大的轮廓 (至少占图像的10%)
+        if (area > maxArea && area > (processedSrc.rows * processedSrc.cols * 0.1)) {
           // 近似轮廓为多边形
           const epsilon = 0.02 * this.cv.arcLength(contour, true);
           const approx = new this.cv.Mat();
@@ -130,6 +102,7 @@ export class PaperDetector {
 
       // 清理内存
       src.delete();
+      if (processedSrc !== src) processedSrc.delete();
       gray.delete();
       blurred.delete();
       edges.delete();
@@ -140,7 +113,7 @@ export class PaperDetector {
 
       if (largestContour) {
         // 提取四角坐标
-        const corners: Point[] = [];
+        const corners: {x: number, y: number}[] = [];
         for (let i = 0; i < largestContour.rows; i++) {
           const point = largestContour.ptr(i, 0);
           corners.push({
@@ -167,18 +140,8 @@ export class PaperDetector {
    * @param corners 四个角点
    * @returns 排序后的角点（左上，右上，右下，左下）
    */
-  private sortCorners(corners: Point[]): Point[] {
-    // 计算中心点
-    const centerX = corners.reduce((sum, point) => sum + point.x, 0) / corners.length;
-    const centerY = corners.reduce((sum, point) => sum + point.y, 0) / corners.length;
-
-    // 按象限分组
-    const sorted = [...corners].sort((a, b) => {
-      if (a.x < centerX && a.y < centerY) return -1; // 左上
-      if (a.x > centerX && a.y < centerY) return -1; // 右上
-      if (a.x > centerX && a.y > centerY) return -1; // 右下
-      return -1; // 左下
-    });
+  private sortCorners(corners: {x: number, y: number}[]): {x: number, y: number}[] {
+    if (corners.length !== 4) return corners;
 
     // 更精确的排序方法
     const topLeft = corners.reduce((prev, curr) =>
@@ -208,7 +171,7 @@ export class PaperDetector {
    */
   async applyPerspectiveCorrection(
     imageElement: HTMLImageElement,
-    corners: Point[]
+    corners: {x: number, y: number}[]
   ): Promise<string> {
     if (!this.cv) {
       throw new Error("OpenCV.js not initialized");
@@ -266,7 +229,7 @@ export class PaperDetector {
       this.cv.imshow(canvas, dst);
 
       // 获取数据URL
-      const dataUrl = canvas.toDataURL("image/jpeg");
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
 
       // 清理内存
       src.delete();
@@ -295,18 +258,12 @@ export class PaperDetector {
       A5: { width: 148, height: 210 } // mm
     };
 
-    const size = paperSizes[paperFormat] || paperSizes.A4;
+    const size = paperSizes[paperFormat as keyof typeof paperSizes] || paperSizes.A4;
 
-    // 假设校正后的图像宽度为800像素
+    // 校正后的图像宽度为800像素
     const imageWidthPixels = 800;
     const paperWidthMM = size.width;
 
     return imageWidthPixels / paperWidthMM;
   }
-}
-
-// 类型定义
-export interface Point {
-  x: number;
-  y: number;
 }

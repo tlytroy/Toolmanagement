@@ -10,4 +10,12 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  optimizeDeps: {
+    exclude: ['@techstark/opencv-js']
+  },
+  build: {
+    rollupOptions: {
+      external: ['@techstark/opencv-js']
+    }
+  }
 })

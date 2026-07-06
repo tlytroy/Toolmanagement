@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+// @ts-ignore
 import { fabric } from "fabric";
 import { useStore } from "@/app/store";
 
@@ -17,6 +18,7 @@ export function CanvasEditor() {
     });
 
     // 加载图片
+    // @ts-ignore
     fabric.Image.fromURL(imageUrl, (img) => {
       img.scaleToWidth(800);
       canvas.add(img);

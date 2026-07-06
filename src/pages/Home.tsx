@@ -9,7 +9,7 @@ import { ExportPage } from "@/features/export/ExportPage";
 
 export function Home() {
   const step = useStore((s) => s.step);
-  const imageUrl = useStore((s) => s.imageUrl);
+  // const imageUrl = useStore((s) => s.imageUrl); // 暂时注释掉未使用的变量
 
   const renderStep = () => {
     switch (step) {

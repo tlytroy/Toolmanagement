@@ -1,8 +1,10 @@
 export default /* glsl */`
 PhysicalMaterial material;
-material.diffuseColor = diffuseColor.rgb * ( 1.0 - metalnessFactor );
+material.diffuseColor = diffuseColor.rgb;
+material.diffuseContribution = diffuseColor.rgb * ( 1.0 - metalnessFactor );
+material.metalness = metalnessFactor;
 
-vec3 dxy = max( abs( dFdx( geometryNormal ) ), abs( dFdy( geometryNormal ) ) );
+vec3 dxy = max( abs( dFdx( nonPerturbedNormal ) ), abs( dFdy( nonPerturbedNormal ) ) );
 float geometryRoughness = max( max( dxy.x, dxy.y ), dxy.z );
 
 material.roughness = max( roughnessFactor, 0.0525 );// 0.0525 corresponds to the base mip of a 256 cubemap.
@@ -40,11 +42,13 @@ material.roughness = min( material.roughness, 1.0 );
 
 	#endif
 
-	material.specularColor = mix( min( pow2( ( material.ior - 1.0 ) / ( material.ior + 1.0 ) ) * specularColorFactor, vec3( 1.0 ) ) * specularIntensityFactor, diffuseColor.rgb, metalnessFactor );
+	material.specularColor = min( pow2( ( material.ior - 1.0 ) / ( material.ior + 1.0 ) ) * specularColorFactor, vec3( 1.0 ) ) * specularIntensityFactor;
+	material.specularColorBlended = mix( material.specularColor, diffuseColor.rgb, metalnessFactor );
 
 #else
 
-	material.specularColor = mix( vec3( 0.04 ), diffuseColor.rgb, metalnessFactor );
+	material.specularColor = vec3( 0.04 );
+	material.specularColorBlended = mix( material.specularColor, diffuseColor.rgb, metalnessFactor );
 	material.specularF90 = 1.0;
 
 #endif
@@ -72,6 +76,12 @@ material.roughness = min( material.roughness, 1.0 );
 	material.clearcoatRoughness = max( material.clearcoatRoughness, 0.0525 );
 	material.clearcoatRoughness += geometryRoughness;
 	material.clearcoatRoughness = min( material.clearcoatRoughness, 1.0 );
+
+#endif
+
+#ifdef USE_DISPERSION
+
+	material.dispersion = dispersion;
 
 #endif
 
@@ -108,7 +118,7 @@ material.roughness = min( material.roughness, 1.0 );
 
 	#endif
 
-	material.sheenRoughness = clamp( sheenRoughness, 0.07, 1.0 );
+	material.sheenRoughness = clamp( sheenRoughness, 0.0001, 1.0 );
 
 	#ifdef USE_SHEEN_ROUGHNESSMAP
 
@@ -133,14 +143,19 @@ material.roughness = min( material.roughness, 1.0 );
 	#endif
 
 	material.anisotropy = length( anisotropyV );
-	anisotropyV /= material.anisotropy;
-	material.anisotropy = saturate( material.anisotropy );
+
+	if( material.anisotropy == 0.0 ) {
+		anisotropyV = vec2( 1.0, 0.0 );
+	} else {
+		anisotropyV /= material.anisotropy;
+		material.anisotropy = saturate( material.anisotropy );
+	}
 
 	// Roughness along the anisotropy bitangent is the material roughness, while the tangent roughness increases with anisotropy.
 	material.alphaT = mix( pow2( material.roughness ), 1.0, pow2( material.anisotropy ) );
 
-	material.anisotropyT = tbn[ 0 ] * anisotropyV.x - tbn[ 1 ] * anisotropyV.y;
-	material.anisotropyB = tbn[ 1 ] * anisotropyV.x + tbn[ 0 ] * anisotropyV.y;
+	material.anisotropyT = tbn[ 0 ] * anisotropyV.x + tbn[ 1 ] * anisotropyV.y;
+	material.anisotropyB = tbn[ 1 ] * anisotropyV.x - tbn[ 0 ] * anisotropyV.y;
 
 #endif
 `;

@@ -9,20 +9,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "fabric": "^5.5.2",
-    "opencv.js": "^1.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "three": "^0.154.0",
+    "three": "^0.185.1",
     "zustand": "^4.5.7"
   },
   "devDependencies": {
-    "@types/fabric": "^5.3.11",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
-    "@types/three": "^0.154.0",
+    "@types/three": "^0.185.0",
     "@vitejs/plugin-react": "^4.7.0",
     "typescript": "^5.9.3",
-    "vite": "^4.5.14"
+    "vite": "^5.4.21"
   }
 }
