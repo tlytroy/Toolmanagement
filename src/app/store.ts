@@ -15,6 +15,9 @@ interface AppState {
   imageUrl: string | null;
   setImageUrl: (url: string) => void;
 
+  calibratedImageUrl: string | null;
+  setCalibratedImageUrl: (url: string) => void;
+
   contours: any[]; // 后期替换为真实轮廓类型
   setContours: (c: any[]) => void;
 }
@@ -25,6 +28,9 @@ export const useStore = create<AppState>((set) => ({
 
   imageUrl: null,
   setImageUrl: (imageUrl) => set({ imageUrl }),
+
+  calibratedImageUrl: null,
+  setCalibratedImageUrl: (calibratedImageUrl) => set({ calibratedImageUrl }),
 
   contours: [],
   setContours: (contours) => set({ contours }),

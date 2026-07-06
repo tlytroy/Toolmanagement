@@ -3,6 +3,7 @@ import { useStore } from "@/app/store";
 export function SegmentationPage() {
   const setStep = useStore((s) => s.setStep);
   const imageUrl = useStore((s) => s.imageUrl);
+  const calibratedImageUrl = useStore((s) => s.calibratedImageUrl);
 
   // 模拟 AI 分割功能
   const handleSegmentation = () => {
@@ -19,35 +20,46 @@ export function SegmentationPage() {
     setStep("editor");
   };
 
+  // 使用校准后的图像，如果没有则使用原始图像
+  const displayImage = calibratedImageUrl || imageUrl;
+
   return (
     <div className="p-8">
       <h2 className="text-xl mb-4">AI 工具轮廓提取</h2>
 
       <div className="mb-6">
-        <div className="relative inline-block">
-          <img
-            src={imageUrl || ""}
-            alt="Calibrated image"
-            className="max-w-full h-auto border rounded cursor-crosshair"
-            style={{ maxHeight: "400px" }}
-            onClick={handlePointClick}
-          />
-          {/* 模拟工具轮廓覆盖层 */}
-          <svg
-            className="absolute top-0 left-0 w-full h-full pointer-events-none"
-            viewBox="0 0 800 600"
-          >
-            {/* 这里会在实际实现中动态生成轮廓路径 */}
-            <path
-              d="M 200 150 L 400 150 L 450 300 L 150 300 Z"
-              fill="rgba(0,150,255,0.3)"
-              stroke="blue"
-              strokeWidth="2"
+        {displayImage ? (
+          <div className="relative inline-block">
+            <img
+              src={displayImage}
+              alt="Calibrated image"
+              className="max-w-full h-auto border rounded cursor-crosshair"
+              style={{ maxHeight: "400px" }}
+              onClick={handlePointClick}
             />
-          </svg>
-        </div>
+            {/* 模拟工具轮廓覆盖层 */}
+            <svg
+              className="absolute top-0 left-0 w-full h-full pointer-events-none"
+              viewBox="0 0 800 600"
+            >
+              {/* 这里会在实际实现中动态生成轮廓路径 */}
+              <path
+                d="M 200 150 L 400 150 L 450 300 L 150 300 Z"
+                fill="rgba(0,150,255,0.3)"
+                stroke="blue"
+                strokeWidth="2"
+              />
+            </svg>
+          </div>
+        ) : (
+          <div className="h-64 bg-gray-200 rounded flex items-center justify-center">
+            <p>未找到上传的图片</p>
+          </div>
+        )}
         <p className="mt-2 text-sm text-gray-600">
-          点击工具区域，AI 将自动提取轮廓（模拟效果）
+          {calibratedImageUrl
+            ? "点击工具区域，AI 将自动提取轮廓（使用校准图像）"
+            : "点击工具区域，AI 将自动提取轮廓（模拟效果）"}
         </p>
       </div>
 
