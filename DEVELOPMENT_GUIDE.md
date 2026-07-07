@@ -1,295 +1,177 @@
-# Toolmanagement-web 开发指南
+以暗猜接口为耻，以认真查阅为荣
+以模糊执行为耻，以寻求确认为荣
+以盲想业务为耻，以人类确认为荣
+以创造接口为耻，以复用现有为荣
+以跳过验证为耻，以主动测试为荣
+以破坏架构为耻，以遵循规范为荣
+以假装理解为耻，以诚实无知为菜
+以盲目修改为耻，以谨慎重构为荣
 
-## 项目概述
+📌 项目背景（给AI看）
+本项目是仿Tooltrace的Web工具：用户上传「工具放在A4纸上的俯拍照片」，浏览器本地完成A4纸检测、透视校正、工具轮廓提取、参数配置，最终导出STL/STEP/DXF文件用于3D打印工具收纳。
+技术栈：Vite + React + TypeScript + OpenCV.js + Fabric.js + Three.js + Zustand，所有计算均在浏览器本地完成，无后端依赖。
+一、项目结构铁律（严禁违反）
 
-Toolmanagement-web 是一个基于浏览器的工具轮廓扫描和 3D 收纳生成器。用户只需将工具平放在 A4/Letter 纸上俯拍上传，系统即可自动识别纸张、标定尺寸、AI 提取工具轮廓、配置嵌件参数，并一键导出 STL/STEP/DXF/SVG 等格式，用于 3D 打印或激光切割工具收纳嵌件。
+1. 单一调试入口（核心红线）
+   所有OpenCV/纸张检测/轮廓提取的调试，仅允许在src/features/calibration/CalibrationPage.tsx中进行，严禁新增任何零散HTML测试文件（包括但不限于public/_.html、test-_.html）。
+   已永久删除的冗余文件（AI不得再提及或使用）：
+   public/optimized-detector-test.html、public/debug-test.html、public/paper-detector-test.html、public/opencv-debug.html、public/simple-test.html、test-paper-detector.html
+2. 文件存放规范（不得随意新增）
+   功能
 
-## 依赖管理策略
+唯一文件路径
 
-### 当前依赖版本
-项目目前已升级到兼容的最新版本组合，以确保使用最新的特性和安全修复。
+OpenCV核心算法
+src/lib/opencvUtils.ts
 
-### Fabric.js 依赖问题
-- Fabric.js v5.x 自带 TypeScript 类型声明，不需要单独安装 `@types/fabric`
-- 如果之前误装了 `@types/fabric`，请卸载：`npm uninstall @types/fabric`
-- 确保 `tsconfig.json` 里没有强制要求该类型包
+OpenCV加载Hook
+src/hooks/useOpenCV.ts
 
-### OpenCV.js 集成说明
-OpenCV 官方没有原生发布 npm 包，浏览器端通常用两种方式：
-✅ 推荐做法：npm 包 `@techstark/opencv-js`（本项目采用）
-- 基于官方 OpenCV 4.10~4.12 编译的 opencv.js + wasm，社区维护最活跃
-- 带 TypeScript 类型声明，Vite / React 可直接用
-- Vite 需排除预构建（避免把 wasm 打进 bundle），已在 `vite.config.ts` 中配置
+校准/调试页面
+src/features/calibration/CalibrationPage.tsx
 
-### 最近的依赖升级
-项目依赖已于 2026年7月7日 升级到以下版本：
-- React & React DOM: 19.2.7 (从 18.3.1 升级)
-- Vite: 8.1.3 (从 5.4.21 升级)
-- TypeScript: 6.0.3 (从 5.9.3 升级)
-- Fabric: 7.4.0 (从 5.5.2 升级)
-- OpenCV.js (@techstark/opencv-js): 5.0.0-release.1 (保持不变)
-- Three.js: 0.185.1 (保持不变)
-- Zustand: 5.0.14 (从 4.5.7 升级)
-- @vitejs/plugin-react: 6.0.3 (从 4.7.0 升级)
-- @types/react: 19.2.17 (从 18.3.31 升级)
-- @types/react-dom: 19.2.3 (从 18.3.7 升级)
-- @types/three: 0.185.0 (保持不变)
+全局状态管理
+src/app/store.ts
+确需新增文件需先说明理由，禁止AI擅自创建零散文件。3. 参数管理规范
+所有调试参数（Canny阈值、模糊核大小、最小轮廓面积、轮廓偏移量等）必须以React State形式存放在CalibrationPage中，通过函数参数传递给工具函数，严禁写死在工具函数的默认值以外的位置。
+二、OpenCV.js开发专项规范
 
-### 依赖版本警告处理
-我们定期检查并更新依赖，以避免使用过时或存在安全问题的版本。所有建议的升级都已经完成：
+1. 内存管理（必查项）
+   所有cv.Mat、cv.MatVector、cv.Kernel等OpenCV对象，使用完毕后必须立即调用.delete()，严禁内存泄漏。不得编造dispose()等不存在的销毁方法。
+2. API合规性
+   仅使用OpenCV.js的Web端API，严禁混用其他环境的API：
+   ✅ 正确：cv.imread(imgElement)、cv.imshow(canvas, mat)、cv.findContours(cnts, hier, ...)
+   ❌ 错误：cv2.imread()（Python API）、cv.imwrite()（Node API）、cv.drawContours(img, cnts)（缺参数版本）
+3. 透视校正必做逻辑
+   使用cv.approxPolyDP获取四边形后，必须对4个点按「左上→右上→右下→左下」排序，严禁直接使用approxPolyDP的无序输出做透视变换。
+4. 单位明确
+   透视校正后必须明确标注像素与实际毫米的换算关系（例如SCALE=10代表1px=0.1mm），所有轮廓坐标运算必须标注单位，严禁无单位的数值计算。
+5. 验证流程
+   复杂算法（如纸张检测、轮廓提取）必须先通过Python OpenCV验证正确性，再迁移到OpenCV.js，严禁直接让AI编写未经验证的复杂算法。
+   三、AI协作八荣八耻（AI专属约束）
+   以集中逻辑为荣，以拆分散文件为耻：核心功能代码必须集中在≤3个文件中，拒绝过度抽象、拆分无意义的小文件。
+   以非阻塞执行为荣，以长命令卡死为耻：严禁执行npm run dev等长期阻塞终端的命令；启动服务前必须先检测端口占用，若端口已占用直接提示用户访问现有地址，不得反复重试。
+   以显式释放内存为荣，以OpenCV内存泄漏为耻：所有OpenCV对象必须显式调用.delete()，不得遗漏。
+   以适配目标环境为荣，以混用跨端API为耻：严格区分Web/Node/Python环境API，本项目为纯Web应用，所有代码必须运行在浏览器中。
+   以先读现有配置为荣，以覆盖原有配置为耻：修改vite.config.ts/tsconfig.json前必须先读取现有文件内容，不得直接覆盖原有配置，不得私自添加未声明的插件或loader。
+   以验证依赖真实性为荣，以虚构不存在包为耻：引用npm包前必须先验证包是否存在，严禁虚构@types/fabric、opencv-contrib-js等不存在/已废弃的依赖。
+   以完整报错分析为荣，以甩锅用户环境为耻：遇到报错必须先索要完整日志/截图，先分析代码逻辑问题，不得张口就说“你环境有问题”“换个Node版本试试”。
+   以输出可运行代码为荣，以留TODO半成品为耻：输出的代码必须是复制粘贴后可直接运行的，不得遗留未定义的变量、未实现的TODO、缺少import的模块。
+   四、开发流程规范
+   小步提交：每调通一个功能点（如纸张检测、透视校正、轮廓提取）立即git commit，禁止累积大量修改后一次性提交。
+   先验证后固化：调试阶段的参数调整仅在CalibrationPage的State中进行，待参数稳定后，再将最优值作为工具函数的默认值，禁止AI擅自修改已验证稳定的参数。
+   禁止全自动：所有AI生成的代码必须经过人工Review后方可合并，严禁开启Auto-accept后直接合并AI代码。
+   五、违规处理
+   若AI违反上述任何一条规定，立即点击Cancel终止当前对话，Reload Window后重新开始，无需与AI争辩。
 
-✅ @types/react: 已升级到 v19.2.17
-✅ @types/react-dom: 已升级到 v19.2.3
-✅ @vitejs/plugin-react: 已升级到 v6.0.3
-✅ fabric: 已升级到 v7.4.0
-✅ react: 已升级到 v19.2.7
-✅ react-dom: 已升级到 v19.2.7
-✅ typescript: 已升级到 v6.0.3
-✅ vite: 已升级到 v8.1.3
-✅ zustand: 已升级到 v5.0.14
+## OpenCV纸张四角检测开发指南
 
-在升级依赖时，我们需要：
-1. 检查兼容性：确保新版本与现有代码兼容
-2. 全面测试：升级后运行所有测试用例
-3. 逐步升级：优先升级核心依赖，再升级次要依赖
-4. 文档更新：记录升级内容和注意事项
+### 1. 统一调试入口
 
-### 依赖升级策略
-1. **全面兼容性升级**：我们选择了一组经过验证可以良好协作的最新版本
-2. **定期评估**：每季度评估一次是否有重要的安全更新或功能改进
-3. **全面测试**：每次升级后都需要进行全面的测试，确保所有功能正常工作
-4. **文档更新**：升级依赖后及时更新相关文档和配置文件
-5. **渐进升级**：对于大版本升级，采用渐进式升级策略，避免一次性引入过多变更
+项目已完成测试界面断舍离，仅保留唯一调试入口：
 
-要检查当前有哪些依赖可以升级，可以运行：
-```bash
-npm outdated
+- `src/features/calibration/CalibrationPage.tsx` - 唯一的OpenCV调试、纸张检测、参数调优入口
+
+所有零散测试页已删除，包括：
+
+- `public/optimized-detector-test.html`
+- `public/debug-test.html`
+- `public/paper-detector-test.html`
+- `public/opencv-debug.html`
+- `public/simple-test.html`
+- `test-paper-detector.html`
+- `src/pages/OpenCVTestPage.tsx`
+- `src/pages/SimpleTestPage.tsx`
+
+### 2. SimplePaperDetector优化说明
+
+已针对`testpic.jpg`图片专门优化了`simplePaperDetector.ts`：
+
+#### 优化点：
+
+1. **边缘检测优化**：将自适应阈值改为Canny边缘检测，更适合木纹背景
+   - 降低Canny阈值到50/150，检测更多边缘
+   - 使用7x7高斯模糊减少木纹噪声
+   - 5x5膨胀操作增强边缘连接
+
+2. **轮廓检测优化**：
+   - 降低最小面积阈值到5%，适应不同大小的纸张
+   - 多epsilon尝试(0.01-0.03)，提高四边形检测成功率
+   - 添加四角排序功能，确保输出顺序为[左上, 右上, 右下, 左下]
+
+3. **类型系统优化**：
+   - 使用Point类型替代any，提高代码可维护性
+   - 完善返回类型为`Point[] | null`
+
+#### 核心代码改进：
+
+```typescript
+// Canny边缘检测替代自适应阈值
+cv.Canny(blurred, edges, 50, 150);
+
+// 多epsilon多边形近似
+const epsilons = [0.01, 0.015, 0.02, 0.025, 0.03];
+for (const epsilon of epsilons) {
+  cv.approxPolyDP(contour, approx, epsilon * perimeter, true);
+  if (approx.rows === 4) {
+    // 检测到四边形
+    break;
+  }
+}
+
+// 四角排序算法
+private sortPoints(points: Point[]): Point[] {
+  points.sort((a, b) => a.y - b.y);
+  const topPoints = points.slice(0, 2).sort((a, b) => a.x - b.x);
+  const bottomPoints = points.slice(2, 4).sort((a, b) => a.x - b.x);
+  return [topPoints[0], topPoints[1], bottomPoints[1], bottomPoints[0]];
+}
 ```
 
-要升级特定依赖，可以运行：
-```bash
-npm install package@latest
-```
+### 3. 测试方法
 
-对于大版本升级，建议先在开发分支测试：
-```bash
-npm install package@major-version
-```
+### 4. 常见问题排查
 
-## 当前实现状态
+#### 检测不到纸张？
 
-### 已完成的功能
-1. ✅ 完整的6步向导UI界面
-2. ✅ 图片上传功能
-3. ✅ 步骤导航和状态管理 (Zustand)
-4. ✅ 纸张检测与透视校正 (OpenCV.js)
-5. ✅ 基础的 Fabric.js 轮廓编辑器
-6. ✅ 参数配置面板
-7. ✅ 导出选项界面
-8. ✅ 纸张检测调试页面
-9. ✅ 手动调整功能
+- **原因**：边缘检测阈值过高，背景噪声干扰
+- **解决**：调整Canny阈值，如`cv.Canny(blurred, edges, 30, 100)`
 
-### 核心技术集成状态
-1. ✅ OpenCV.js - 纸张检测与透视校正（已完成完整功能）
-2. ✅ SAM (Segment Anything) - AI 工具轮廓提取（已完成基础集成）
-3. ⬜ Clipper.js - 轮廓偏移与布尔运算
-4. ⬜ Three.js + OpenCASCADE - 3D 建模与渲染
+#### 四角顺序错误？
 
-### 各步骤功能详情
+- **原因**：轮廓点顺序未标准化
+- **解决**：确保使用`sortPoints`方法对四角进行排序
 
-#### 1. 上传步骤 (Upload)
-- 图片上传功能
-- 支持 JPG/PNG/WebP 格式
-- 上传后自动跳转到纸张检测步骤
+#### 性能问题？
 
-#### 2. 纸张检测步骤 (Calibration)
-- 自动纸张四角检测 (OpenCV.js)
-- 透视校正功能
-- 纸张类型选择 (A4/Letter/A5)
-- 手动调整备用方案
-- 像素到毫米的比例计算
-- 调试信息显示
-- 失败原因诊断
+- **原因**：高斯模糊核过大，膨胀操作太频繁
+- **解决**：减小高斯模糊核到5x5，或减少膨胀迭代次数
 
-#### 3. AI 分割步骤 (Segmentation)
-- SAM 分割界面占位实现
-- 点击生成掩码模拟功能
-- 参数配置选项
+### 5. 后续维护规范
 
-#### 4. 轮廓编辑步骤 (Editor)
-- Fabric.js Canvas 编辑器
-- 图片显示和假轮廓展示
-- 参数配置面板集成
+1. **统一测试界面管理**：
+   - 所有测试必须在现有界面中进行，禁止创建新的测试文件
+   - 若确需创建新测试界面，必须先获得团队负责人批准，并更新本文档
+   - 每次修改测试界面后，需在本文档中记录修改内容和原因
+   - 当前唯一有效的测试界面是：`src/features/calibration/CalibrationPage.tsx`
 
-#### 5. 参数配置步骤 (Params)
-- 嵌件参数配置面板
-- 轮廓偏移、底板厚度、腔体深度设置
+2. **参数调整规范**：针对不同场景调整参数时，在代码中添加明确注释，说明调整原因和适用场景
 
-#### 6. 导出步骤 (Export)
-- 3D 预览占位符
-- 多种导出格式选项 (STL/3MF/STEP/DXF/SVG)
+3. **类型安全**：所有新增代码必须使用TypeScript类型系统，避免any类型
 
-## 测试图片
+4. **资源清理**：确保所有OpenCV Mat对象都正确释放，避免内存泄漏
 
-项目根目录下的 `testpic.jpg` 可用于测试所有功能。
+5. **测试界面使用规范**：
+   - 所有OpenCV相关的调试、纸张检测、参数调优都应通过`src/features/calibration/CalibrationPage.tsx`进行
+   - 不再维护多个独立的测试界面，避免功能重复和维护困难
 
-## 如何测试当前功能
+### 6. 下一步优化建议
 
-1. **启动开发服务器**
-   ```bash
-   npm run dev
-   ```
-   访问 http://localhost:5173
+1. 添加参数自动调优功能，根据输入图片自动调整检测参数
+2. 实现多纸张检测支持
+3. 添加旋转校正功能，处理倾斜纸张
+4. 优化性能，减少检测时间到100ms以内
 
-2. **测试基本流程**
-   - 上传 `testpic.jpg`
-   - 在纸张检测页面点击"自动检测纸张"
-   - 导航到不同步骤查看界面
+---
 
-## 已实现的 OpenCV.js 功能
-
-### PaperDetector 类
-
-位于 `src/utils/PaperDetector.ts`，提供了以下功能：
-
-1. **初始化 OpenCV.js**
-   - 使用 `@techstark/opencv-js` npm 包
-   - 自动异步加载 OpenCV 模块
-2. **纸张四角检测**
-   - 多策略图像分割（Otsu、自适应阈值、Canny边缘检测等）
-   - 轮廓查找
-   - 凸四边形拟合（不要求严格矩形）
-   - 角点排序
-3. **透视校正**
-   - 应用透视变换
-   - 生成校正后图像
-4. **尺寸标定**
-   - 计算像素到毫米的比例
-5. **调试和错误处理**
-   - 详细的调试信息输出
-   - 具体的失败原因诊断
-
-### 校准页面改进
-
-校准页面 (`src/features/calibration/CalibrationPage.tsx`) 已经过重大改进：
-
-1. **现代化UI设计** - 使用网格布局和卡片设计
-2. **自动纸张检测** - 一键自动检测纸张四角
-3. **图像自适应缩放** - 图片自动缩放以适应显示区域
-4. **纸张类型选择** - 支持A4、Letter、A5等标准纸张类型
-5. **手动调整备用方案** - 自动检测失败时的手动调整选项
-6. **实时角点显示** - 检测到的角点实时可视化显示
-7. **尺寸标定信息** - 显示像素到毫米的转换比例
-8. **调试信息显示** - 显示每种检测策略的中间结果
-9. **失败原因诊断** - 提供具体的失败原因和改进建议
-
-## 重写的 PaperDetector.ts 实现细节
-
-### 算法改进
-
-1. **多策略图像分割**
-   - Otsu阈值法：适用于高对比度图像
-   - 自适应阈值法（GAUSSIAN和MEAN）：适用于光照不均匀场景
-   - Canny边缘检测（低阈值和中阈值）：适用于复杂背景
-   - CLAHE增强+自适应阈值：适用于低对比度图像
-
-2. **鲁棒的四边形检测**
-   - 不再严格要求矩形，接受透视变形的凸四边形
-   - 多epsilon逼近策略，提高检测成功率
-   - 角度约束（40°-140°），过滤不合理形状
-
-3. **智能评分机制**
-   - 面积得分：优先选择大面积轮廓
-   - 形状规则性得分：角度接近90°、边长均匀的形状得分更高
-   - 综合评分选出最优候选
-
-4. **详细的调试信息**
-   - 每种策略的中间结果可视化
-   - 候选轮廓数量统计
-   - 失败原因详细诊断
-
-### 性能优化
-
-1. **图像预处理优化**
-   - 自适应缩放：大图缩小处理提速，小图保持原尺寸
-   - 高斯模糊降噪：减少噪声干扰
-
-2. **内存管理**
-   - 及时释放OpenCV Mat对象
-   - 合理使用delete()方法清理资源
-
-3. **早期终止**
-   - 找到高质量结果后提前结束后续策略
-
-### 错误处理和用户体验
-
-1. **详细的失败原因诊断**
-   - 无候选轮廓：提示图像质量或对比度问题
-   - 无法拟合四边形：提示纸张边缘遮挡或弯曲
-   - 异常处理：捕获并显示具体错误信息
-
-2. **用户友好的建议**
-   - 提供改善图像质量的具体建议
-   - 纸张占比建议（至少占画面10%）
-
-## 下一步开发计划
-
-### 第一阶段：完善纸张检测功能
-1. ✅ 优化纸张检测算法准确性，提高检测成功率（多阈值方法、形状规则性检查）
-2. ✅ 实现真正可交互的手动调整功能（拖拽角点）
-3. ✅ 添加更多错误处理和用户提示（光照不足、对比度低等）
-   - 检测失败时提供具体原因（如"图像对比度不足"、"未检测到矩形轮廓"等）
-   - 提供改善图像质量的建议
-   - 添加加载状态和进度指示
-4. ✅ 优化性能和内存管理（及时释放 OpenCV 资源）
-5. ✅ 添加自动化测试验证功能正确性
-
-### 第二阶段：集成 SAM 分割模型
-1. ✅ 集成 SAM ONNX 模型到浏览器环境
-2. ✅ 实现点击生成掩码功能
-3. 🔄 轮廓提取和优化（从掩码生成矢量路径）
-4. ⬜ 模型缓存机制（IndexedDB 存储模型文件）
-5. ⬜ 性能优化（Web Workers 或 WebGL 加速）
-
-### 第三阶段：轮廓处理功能
-1. 集成 Clipper.js 进行轮廓偏移和布尔运算
-2. 实现轮廓编辑工具（移动、缩放、旋转）
-3. 轮廓优化工具（平滑、简化）
-4. 多轮廓管理（选择、分组、层级）
-
-### 第四阶段：3D 建模和导出
-1. 集成 Three.js 进行 3D 渲染
-2. 实现基础的 3D 嵌件建模功能
-3. 多格式导出功能（STL/STEP/DXF/SVG）
-4. 3D 预览和交互功能
-
-### 第五阶段：用户体验优化
-1. 添加加载状态和进度指示
-2. 实现撤销/重做功能
-3. 添加键盘快捷键支持
-4. 响应式设计优化
-5. 国际化支持
-
-## 项目结构
-
-```
-src/
-├── app/           # 全局状态管理 (Zustand)
-├── components/    # 公共组件
-├── features/      # 功能模块
-│   ├── upload/    # 上传功能
-│   ├── calibration/ # 纸张检测与标定
-│   ├── segmentation/ # AI 分割
-│   ├── editor/    # 轮廓编辑
-│   ├── params/    # 参数配置
-│   └── export/    # 导出功能
-├── utils/         # 工具函数
-└── pages/         # 页面组件
-```
-
-## 开发资源
-
-- OpenCV.js 文档: https://docs.opencv.org/
-- SAM (Segment Anything): https://github.com/facebookresearch/segment-anything
-- Fabric.js: http://fabricjs.com/
-- Three.js: https://threejs.org/
+_本指南最后更新：2026-07-07_

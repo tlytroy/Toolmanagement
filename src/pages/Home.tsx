@@ -6,8 +6,6 @@ import { ParamsPanel } from "@/features/params/ParamsPanel";
 import { CalibrationPage } from "@/features/calibration/CalibrationPage";
 import { SegmentationPage } from "@/features/segmentation/SegmentationPage";
 import { ExportPage } from "@/features/export/ExportPage";
-import { OpenCVTestPage } from "@/pages/OpenCVTestPage";
-import { SimpleTestPage } from "@/pages/SimpleTestPage";
 
 export function Home() {
   const step = useStore((s) => s.step);
@@ -37,10 +35,6 @@ export function Home() {
         );
       case "export":
         return <ExportPage />;
-      case "opencv-test":
-        return <OpenCVTestPage />;
-      case "simple-test":
-        return <SimpleTestPage />;
       default:
         return <UploadPage />;
     }

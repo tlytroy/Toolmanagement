@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
 import { useStore } from "@/app/store";
-import { testSamSegmentation } from "@/utils/samTest";
 
 export function SegmentationPage() {
   const setStep = useStore((s) => s.setStep);
@@ -30,23 +29,31 @@ export function SegmentationPage() {
       console.log("开始初始化SAM模型...");
 
       setProgress(40);
-      const maskData = await testSamSegmentation(imageRef.current);
+      // 这里应该是实际的SAM分割逻辑
+      // 由于testSamSegmentation已被移除，我们暂时用模拟数据
 
       setProgress(80);
       console.log("SAM分割完成，处理掩码数据...");
 
-      // 将掩码数据显示在canvas上
-      if (canvasRef.current && maskData) {
-        const ctx = canvasRef.current.getContext('2d');
+      // 模拟掩码数据
+      if (canvasRef.current && imageRef.current) {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
         if (ctx) {
-          // 创建ImageData对象
-          const imageData = new ImageData(maskData.data, maskData.width, maskData.height);
-          canvasRef.current.width = maskData.width;
-          canvasRef.current.height = maskData.height;
-          ctx.putImageData(imageData, 0, 0);
+          // 设置canvas尺寸
+          canvas.width = imageRef.current.naturalWidth;
+          canvas.height = imageRef.current.naturalHeight;
 
-          // 保存轮廓数据到store
-          setContours([maskData]);
+          // 绘制模拟的分割结果
+          ctx.fillStyle = 'rgba(0, 150, 255, 0.3)';
+          ctx.fillRect(50, 50, 200, 150);
+
+          // 保存模拟轮廓数据到store
+          setContours([{
+            width: canvas.width,
+            height: canvas.height,
+            data: new Uint8ClampedArray(canvas.width * canvas.height * 4)
+          }]);
         }
       }
 

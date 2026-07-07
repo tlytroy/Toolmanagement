@@ -40,19 +40,20 @@ export class PaperDetector {
   ): { contour: any; area: number } | null {
     let bestContour = null;
     let maxArea = 0;
+    let bestScore = 0;
 
     for (let i = 0; i < contours.size(); i++) {
       const contour = contours.get(i);
       const area = cv.contourArea(contour);
 
-      // 忽略太小的轮廓（使用相对面积而不是固定值）
-      if (area < 100) { // 降低最小面积限制
+      // 忽略太小的轮廓
+      if (area < 100) {
         contour.delete();
         continue;
       }
 
       // 多epsilon尝试，提高检测成功率
-      const epsilons = [0.01, 0.015, 0.02, 0.025, 0.03, 0.04]; // 增加更多epsilon值
+      const epsilons = [0.01, 0.015, 0.02, 0.025, 0.03, 0.04];
 
       for (const epsilon of epsilons) {
         const approx = new cv.Mat();
@@ -64,19 +65,27 @@ export class PaperDetector {
           // 检查是否为凸四边形
           const isConvex = cv.isContourConvex(approx);
 
-          // 放宽角度约束：允许30°-150°之间的角度（更宽松）
+          // 放宽角度约束：允许30°-150°之间的角度
           const anglesValid = this.areQuadrilateralAnglesValid(approx, 30, 150);
 
-          if (isConvex && anglesValid && area > maxArea) {
-            if (bestContour) {
-              bestContour.delete();
+          if (isConvex && anglesValid) {
+            // 计算综合评分（面积 + 形状规则性）
+            const score = this.calculateQuadrilateralScore(approx, area);
+
+            if (score > bestScore) {
+              if (bestContour) {
+                bestContour.delete();
+              }
+              maxArea = area;
+              bestScore = score;
+              bestContour = approx.clone();
+            } else {
+              approx.delete();
             }
-            maxArea = area;
-            bestContour = approx.clone();
+            break;
           } else {
             approx.delete();
           }
-          break;
         } else {
           approx.delete();
         }
@@ -89,13 +98,79 @@ export class PaperDetector {
   }
 
   /**
+   * 计算四边形评分（面积 + 形状规则性）
+   * @param quadrilateral 四边形轮廓
+   * @param area 面积
+   * @returns 综合评分
+   */
+  private calculateQuadrilateralScore(quadrilateral: any, area: number): number {
+    // 面积得分（归一化到0-1）
+    // 假设理想面积为图像面积的30%-80%
+    const idealAreaRatio = 0.5;
+    const areaScore = Math.exp(-Math.pow(area / 10000 - idealAreaRatio, 2) * 10);
+
+    // 形状规则性得分（角度接近90°的程度）
+    const points = [];
+    for (let i = 0; i < 4; i++) {
+      const point = quadrilateral.ptr(i, 0);
+      points.push({ x: point[0], y: point[1] });
+    }
+
+    let angleScore = 0;
+    for (let i = 0; i < 4; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % 4];
+      const p3 = points[(i + 2) % 4];
+
+      // 计算向量
+      const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
+      const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
+
+      // 计算夹角（弧度转角度）
+      const dotProduct = v1.x * v2.x + v1.y * v2.y;
+      const mag1 = Math.sqrt(v1.x ** 2 + v1.y ** 2);
+      const mag2 = Math.sqrt(v2.x ** 2 + v2.y ** 2);
+
+      if (mag1 === 0 || mag2 === 0) continue;
+
+      const cosTheta = dotProduct / (mag1 * mag2);
+      const angle = Math.acos(Math.max(-1, Math.min(1, cosTheta))) * (180 / Math.PI);
+
+      // 角度越接近90°得分越高
+      const angleDeviation = Math.abs(angle - 90);
+      angleScore += Math.max(0, 1 - angleDeviation / 90);
+    }
+    angleScore /= 4; // 平均角度得分
+
+    // 边长均匀性得分
+    let sideScore = 0;
+    const sides = [];
+    for (let i = 0; i < 4; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % 4];
+      const sideLength = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+      sides.push(sideLength);
+    }
+
+    // 计算边长的标准差
+    const meanSide = sides.reduce((sum, s) => sum + s, 0) / 4;
+    const variance = sides.reduce((sum, s) => sum + Math.pow(s - meanSide, 2), 0) / 4;
+    const stdDev = Math.sqrt(variance);
+    // 标准差越小得分越高
+    sideScore = Math.max(0, 1 - stdDev / meanSide);
+
+    // 综合评分
+    return areaScore * 0.4 + angleScore * 0.4 + sideScore * 0.2;
+  }
+
+  /**
    * 检查四边形角度是否有效
    * @param quadrilateral 四边形轮廓
-   * @param minAngle 最小角度（默认40°）
-   * @param maxAngle 最大角度（默认140°）
+   * @param minAngle 最小角度
+   * @param maxAngle 最大角度
    * @returns 是否有效
    */
-  private areQuadrilateralAnglesValid(quadrilateral: any, minAngle: number = 40, maxAngle: number = 140): boolean {
+  private areQuadrilateralAnglesValid(quadrilateral: any, minAngle: number, maxAngle: number): boolean {
     const points = [];
     for (let i = 0; i < 4; i++) {
       const point = quadrilateral.ptr(i, 0);
@@ -120,8 +195,7 @@ export class PaperDetector {
       if (mag1 === 0 || mag2 === 0) continue;
 
       const cosTheta = dotProduct / (mag1 * mag2);
-      const angle =
-        Math.acos(Math.max(-1, Math.min(1, cosTheta))) * (180 / Math.PI);
+      const angle = Math.acos(Math.max(-1, Math.min(1, cosTheta))) * (180 / Math.PI);
 
       // 角度应该在指定范围内
       if (angle < minAngle || angle > maxAngle) {
@@ -133,7 +207,7 @@ export class PaperDetector {
   }
 
   /**
-   * 排序四边形角点：按顺时针顺序，左上角第一个
+   * 排序四边形角点：左上→右上→右下→左下
    * @param corners 未排序的角点
    * @returns 排序后的角点
    */
@@ -148,29 +222,39 @@ export class PaperDetector {
       y: corners.reduce((sum, p) => sum + p.y, 0) / 4,
     };
 
-    // 按极角排序
+    // 按象限排序
     const sorted = [...corners].sort((a, b) => {
+      // 计算相对于中心点的象限
+      const quadA = a.x < center.x ? (a.y < center.y ? 1 : 4) : (a.y < center.y ? 2 : 3);
+      const quadB = b.x < center.x ? (b.y < center.y ? 1 : 4) : (b.y < center.y ? 2 : 3);
+
+      if (quadA !== quadB) {
+        return quadA - quadB;
+      }
+
+      // 同一象限内按角度排序
       const angleA = Math.atan2(a.y - center.y, a.x - center.x);
       const angleB = Math.atan2(b.y - center.y, b.x - center.x);
       return angleA - angleB;
     });
 
-    // 确保第一个点是左上角
-    const topLeft = sorted.reduce((min, p) => {
-      return p.x + p.y < min.x + min.y ? p : min;
-    });
+    // 确保顺序为：左上→右上→右下→左下
+    // 左上角应该是x+y最小的点
+    const topLeftIndex = sorted.reduce((minIndex, p, i, arr) => {
+      return p.x + p.y < arr[minIndex].x + arr[minIndex].y ? i : minIndex;
+    }, 0);
 
-    // 旋转数组使左上角第一个
-    const index = sorted.findIndex((p) => p === topLeft);
-    if (index > 0) {
-      return [...sorted.slice(index), ...sorted.slice(0, index)];
-    }
-
-    return sorted;
+    // 重新排列数组，使左上角在第一位
+    return [
+      sorted[topLeftIndex],
+      sorted[(topLeftIndex + 1) % 4],
+      sorted[(topLeftIndex + 2) % 4],
+      sorted[(topLeftIndex + 3) % 4]
+    ];
   }
 
   /**
-   * 检测纸张四角 - 使用简化的文档扫描算法
+   * 检测纸张四角 - 使用多策略文档扫描算法
    * @param imageElement HTMLImageElement
    * @returns 纸张四角坐标
    */
@@ -202,7 +286,7 @@ export class PaperDetector {
       cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
 
       // 多策略图像分割 - 提高不同光照条件下的检测成功率
-      let bestContour = null;
+      let bestContour: { contour: any; area: number } | null = null;
       let maxArea = 0;
 
       // 策略1: Otsu阈值分割
@@ -231,7 +315,10 @@ export class PaperDetector {
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
-          bestContour = result.contour;
+          if (bestContour) {
+            (bestContour as { contour: any; area: number }).contour.delete();
+          }
+          bestContour = result;
         }
 
         thresh.delete();
@@ -241,7 +328,7 @@ export class PaperDetector {
       }
 
       // 策略2: 自适应阈值分割（GAUSSIAN）
-      if (!bestContour || maxArea < src.cols * src.rows * 0.1) { // 降低阈值要求
+      if (!bestContour || maxArea < src.cols * src.rows * 0.05) {
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(
           blurred,
@@ -268,7 +355,10 @@ export class PaperDetector {
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
-          bestContour = result.contour;
+          if (bestContour) {
+            (bestContour as { contour: any; area: number }).contour.delete();
+          }
+          bestContour = result;
         }
 
         thresh.delete();
@@ -278,7 +368,7 @@ export class PaperDetector {
       }
 
       // 策略3: 自适应阈值分割（MEAN）
-      if (!bestContour || maxArea < src.cols * src.rows * 0.1) { // 降低阈值要求
+      if (!bestContour || maxArea < src.cols * src.rows * 0.05) {
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(
           blurred,
@@ -305,7 +395,10 @@ export class PaperDetector {
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
-          bestContour = result.contour;
+          if (bestContour) {
+            (bestContour as { contour: any; area: number }).contour.delete();
+          }
+          bestContour = result;
         }
 
         thresh.delete();
@@ -314,8 +407,37 @@ export class PaperDetector {
         hierarchy.delete();
       }
 
-      // 策略4: Canny边缘检测
-      if (!bestContour || maxArea < src.cols * src.rows * 0.1) { // 降低阈值要求
+      // 策略4: Canny边缘检测（低阈值）
+      if (!bestContour || maxArea < src.cols * src.rows * 0.05) {
+        const edges = new cv.Mat();
+        cv.Canny(blurred, edges, 30, 100);
+
+        const contours = new cv.MatVector();
+        const hierarchy = new cv.Mat();
+        cv.findContours(
+          edges,
+          contours,
+          hierarchy,
+          cv.RETR_EXTERNAL,
+          cv.CHAIN_APPROX_SIMPLE,
+        );
+
+        const result = this.findBestQuadrilateral(contours);
+        if (result && result.area > maxArea) {
+          maxArea = result.area;
+          if (bestContour) {
+            (bestContour as { contour: any; area: number }).contour.delete();
+          }
+          bestContour = result;
+        }
+
+        edges.delete();
+        contours.delete();
+        hierarchy.delete();
+      }
+
+      // 策略5: Canny边缘检测（中阈值）
+      if (!bestContour || maxArea < src.cols * src.rows * 0.05) {
         const edges = new cv.Mat();
         cv.Canny(blurred, edges, 50, 150);
 
@@ -332,7 +454,10 @@ export class PaperDetector {
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
-          bestContour = result.contour;
+          if (bestContour) {
+            (bestContour as { contour: any; area: number }).contour.delete();
+          }
+          bestContour = result;
         }
 
         edges.delete();
@@ -340,8 +465,8 @@ export class PaperDetector {
         hierarchy.delete();
       }
 
-      // 策略5: CLAHE增强 + 自适应阈值
-      if (!bestContour || maxArea < src.cols * src.rows * 0.1) { // 降低阈值要求
+      // 策略6: CLAHE增强 + 自适应阈值
+      if (!bestContour || maxArea < src.cols * src.rows * 0.05) {
         const clahe = cv.createCLAHE(2.0, new cv.Size(8, 8));
         const enhanced = new cv.Mat();
         clahe.apply(blurred, enhanced);
@@ -372,7 +497,10 @@ export class PaperDetector {
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
-          bestContour = result.contour;
+          if (bestContour) {
+            (bestContour as { contour: any; area: number }).contour.delete();
+          }
+          bestContour = result;
         }
 
         clahe.delete();
@@ -398,8 +526,8 @@ export class PaperDetector {
       if (bestContour) {
         // 提取四角坐标
         const corners: Point[] = [];
-        for (let i = 0; i < bestContour.rows; i++) {
-          const point = bestContour.ptr(i, 0);
+        for (let i = 0; i < bestContour.contour.rows; i++) {
+          const point = bestContour.contour.ptr(i, 0);
           corners.push({
             x: point[0],
             y: point[1],
@@ -409,7 +537,7 @@ export class PaperDetector {
         // 角点排序：按顺时针顺序排列，确保第一个点是左上角
         const sortedCorners = this.sortQuadrilateralCorners(corners);
 
-        bestContour.delete();
+        bestContour.contour.delete();
         console.log("[PaperDetector] Found corners:", sortedCorners);
         return sortedCorners;
       } else {

@@ -19,7 +19,7 @@ async function getCV() {
   }
 }
 
-export class PaperDetector {
+export class PaperDetectorDebug {
   private initialized = false;
 
   constructor() {}
@@ -38,15 +38,18 @@ export class PaperDetector {
   private findBestQuadrilateral(
     contours: any,
   ): { contour: any; area: number } | null {
+    console.log(`[PaperDetector] Processing ${contours.size()} contours`);
     let bestContour = null;
     let maxArea = 0;
 
     for (let i = 0; i < contours.size(); i++) {
       const contour = contours.get(i);
       const area = cv.contourArea(contour);
+      console.log(`[PaperDetector] Contour ${i}: area=${area}`);
 
       // 忽略太小的轮廓（使用相对面积而不是固定值）
       if (area < 100) { // 降低最小面积限制
+        console.log(`[PaperDetector] Contour ${i} too small, skipping`);
         contour.delete();
         continue;
       }
@@ -61,13 +64,18 @@ export class PaperDetector {
 
         // 检查是否为四边形
         if (approx.rows === 4) {
+          console.log(`[PaperDetector] Contour ${i} approximated to 4-point polygon with epsilon=${epsilon}`);
+
           // 检查是否为凸四边形
           const isConvex = cv.isContourConvex(approx);
+          console.log(`[PaperDetector] Convex: ${isConvex}`);
 
           // 放宽角度约束：允许30°-150°之间的角度（更宽松）
           const anglesValid = this.areQuadrilateralAnglesValid(approx, 30, 150);
+          console.log(`[PaperDetector] Angles valid: ${anglesValid}`);
 
           if (isConvex && anglesValid && area > maxArea) {
+            console.log(`[PaperDetector] Found better candidate with area=${area}`);
             if (bestContour) {
               bestContour.delete();
             }
@@ -78,6 +86,7 @@ export class PaperDetector {
           }
           break;
         } else {
+          console.log(`[PaperDetector] Contour ${i} not a quadrilateral with epsilon=${epsilon} (rows=${approx.rows})`);
           approx.delete();
         }
       }
@@ -85,6 +94,7 @@ export class PaperDetector {
       contour.delete();
     }
 
+    console.log(`[PaperDetector] Best contour area: ${maxArea}`);
     return bestContour ? { contour: bestContour, area: maxArea } : null;
   }
 
@@ -122,6 +132,8 @@ export class PaperDetector {
       const cosTheta = dotProduct / (mag1 * mag2);
       const angle =
         Math.acos(Math.max(-1, Math.min(1, cosTheta))) * (180 / Math.PI);
+
+      console.log(`[PaperDetector] Angle ${i}: ${angle}° (range: ${minAngle}°-${maxAngle}°)`);
 
       // 角度应该在指定范围内
       if (angle < minAngle || angle > maxAngle) {
@@ -206,6 +218,7 @@ export class PaperDetector {
       let maxArea = 0;
 
       // 策略1: Otsu阈值分割
+      console.log("[PaperDetector] Trying Otsu threshold strategy");
       {
         const thresh = new cv.Mat();
         cv.threshold(
@@ -228,10 +241,12 @@ export class PaperDetector {
           cv.CHAIN_APPROX_SIMPLE,
         );
 
+        console.log(`[PaperDetector] Otsu strategy found ${contours.size()} contours`);
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
           bestContour = result.contour;
+          console.log(`[PaperDetector] Otsu strategy found best contour with area=${maxArea}`);
         }
 
         thresh.delete();
@@ -242,6 +257,7 @@ export class PaperDetector {
 
       // 策略2: 自适应阈值分割（GAUSSIAN）
       if (!bestContour || maxArea < src.cols * src.rows * 0.1) { // 降低阈值要求
+        console.log("[PaperDetector] Trying Adaptive Gaussian threshold strategy");
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(
           blurred,
@@ -265,10 +281,12 @@ export class PaperDetector {
           cv.CHAIN_APPROX_SIMPLE,
         );
 
+        console.log(`[PaperDetector] Adaptive Gaussian strategy found ${contours.size()} contours`);
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
           bestContour = result.contour;
+          console.log(`[PaperDetector] Adaptive Gaussian strategy found best contour with area=${maxArea}`);
         }
 
         thresh.delete();
@@ -279,6 +297,7 @@ export class PaperDetector {
 
       // 策略3: 自适应阈值分割（MEAN）
       if (!bestContour || maxArea < src.cols * src.rows * 0.1) { // 降低阈值要求
+        console.log("[PaperDetector] Trying Adaptive Mean threshold strategy");
         const thresh = new cv.Mat();
         cv.adaptiveThreshold(
           blurred,
@@ -302,10 +321,12 @@ export class PaperDetector {
           cv.CHAIN_APPROX_SIMPLE,
         );
 
+        console.log(`[PaperDetector] Adaptive Mean strategy found ${contours.size()} contours`);
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
           bestContour = result.contour;
+          console.log(`[PaperDetector] Adaptive Mean strategy found best contour with area=${maxArea}`);
         }
 
         thresh.delete();
@@ -316,6 +337,7 @@ export class PaperDetector {
 
       // 策略4: Canny边缘检测
       if (!bestContour || maxArea < src.cols * src.rows * 0.1) { // 降低阈值要求
+        console.log("[PaperDetector] Trying Canny edge detection strategy");
         const edges = new cv.Mat();
         cv.Canny(blurred, edges, 50, 150);
 
@@ -329,10 +351,12 @@ export class PaperDetector {
           cv.CHAIN_APPROX_SIMPLE,
         );
 
+        console.log(`[PaperDetector] Canny strategy found ${contours.size()} contours`);
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
           bestContour = result.contour;
+          console.log(`[PaperDetector] Canny strategy found best contour with area=${maxArea}`);
         }
 
         edges.delete();
@@ -342,6 +366,7 @@ export class PaperDetector {
 
       // 策略5: CLAHE增强 + 自适应阈值
       if (!bestContour || maxArea < src.cols * src.rows * 0.1) { // 降低阈值要求
+        console.log("[PaperDetector] Trying CLAHE enhancement strategy");
         const clahe = cv.createCLAHE(2.0, new cv.Size(8, 8));
         const enhanced = new cv.Mat();
         clahe.apply(blurred, enhanced);
@@ -369,10 +394,12 @@ export class PaperDetector {
           cv.CHAIN_APPROX_SIMPLE,
         );
 
+        console.log(`[PaperDetector] CLAHE strategy found ${contours.size()} contours`);
         const result = this.findBestQuadrilateral(contours);
         if (result && result.area > maxArea) {
           maxArea = result.area;
           bestContour = result.contour;
+          console.log(`[PaperDetector] CLAHE strategy found best contour with area=${maxArea}`);
         }
 
         clahe.delete();
@@ -388,6 +415,8 @@ export class PaperDetector {
         maxArea,
         "image area:",
         src.cols * src.rows,
+        "threshold:",
+        src.cols * src.rows * 0.1,
       );
 
       // 清理内存

@@ -6,9 +6,7 @@ type Step =
   | "segmentation"
   | "editor"
   | "params"
-  | "export"
-  | "opencv-test"
-  | "simple-test";
+  | "export";
 
 interface AppState {
   step: Step;
