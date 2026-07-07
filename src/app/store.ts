@@ -6,7 +6,8 @@ type Step =
   | "segmentation"
   | "editor"
   | "params"
-  | "export";
+  | "export"
+  | "diagnose";
 
 interface AppState {
   step: Step;

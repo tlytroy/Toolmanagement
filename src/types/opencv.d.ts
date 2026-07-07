@@ -1,4 +1,12 @@
 // OpenCV.js 类型定义
+// ============================================================
+
+// 模块声明：@techstark/opencv-js 的 default export 是一个 Promise<OpenCV>
+declare module '@techstark/opencv-js' {
+  const cvReadyPromise: Promise<OpenCV>;
+  export default cvReadyPromise;
+}
+
 export interface Mat {
   rows: number;
   cols: number;
@@ -12,6 +20,8 @@ export interface Mat {
 
 export interface Size {
   new (width: number, height: number): Size;
+  width: number;
+  height: number;
 }
 
 export interface Scalar {
@@ -38,7 +48,14 @@ export interface OpenCV {
   COLOR_RGBA2GRAY: number;
 
   // 模糊处理
-  GaussianBlur(src: Mat, dst: Mat, ksize: Size, sigmaX: number, sigmaY?: number): void;
+  GaussianBlur(
+    src: Mat,
+    dst: Mat,
+    ksize: Size,
+    sigmaX: number,
+    sigmaY?: number,
+    borderType?: number
+  ): void;
   Size: Size;
 
   // 边缘检测
@@ -50,7 +67,7 @@ export interface OpenCV {
     contours: MatVector,
     hierarchy: Mat,
     mode: number,
-    method: number
+    method: number,
   ): void;
   RETR_EXTERNAL: number;
   CHAIN_APPROX_SIMPLE: number;
@@ -58,19 +75,19 @@ export interface OpenCV {
   // 轮廓操作
   contourArea(contour: Mat): number;
   arcLength(curve: Mat, closed: boolean): number;
-  approxPolyDP(curve: Mat, approxCurve: Mat, epsilon: number, closed: boolean): void;
+  approxPolyDP(
+    curve: Mat,
+    approxCurve: Mat,
+    epsilon: number,
+    closed: boolean,
+  ): void;
   isContourConvex(contour: Mat): boolean;
 
   // 点操作
   Point: Point;
 
   // 矩阵操作
-  matFromArray(
-    rows: number,
-    cols: number,
-    type: number,
-    array: number[]
-  ): Mat;
+  matFromArray(rows: number, cols: number, type: number, array: number[]): Mat;
   getPerspectiveTransform(src: Mat, dst: Mat): Mat;
   warpPerspective(
     src: Mat,
@@ -79,7 +96,7 @@ export interface OpenCV {
     dsize: Size,
     flags?: number,
     borderMode?: number,
-    borderValue?: Scalar
+    borderValue?: Scalar,
   ): void;
   INTER_LINEAR: number;
   BORDER_CONSTANT: number;
@@ -90,7 +107,7 @@ export interface OpenCV {
     dst: Mat,
     thresh: number,
     maxval: number,
-    type: number
+    type: number,
   ): void;
   THRESH_BINARY: number;
   THRESH_BINARY_INV: number;
@@ -102,7 +119,7 @@ export interface OpenCV {
     adaptiveMethod: number,
     thresholdType: number,
     blockSize: number,
-    C: number
+    C: number,
   ): void;
   ADAPTIVE_THRESH_GAUSSIAN_C: number;
   ADAPTIVE_THRESH_MEAN_C: number;
@@ -113,11 +130,24 @@ export interface OpenCV {
     contours: MatVector,
     contourIdx: number,
     color: Scalar,
-    thickness: number
+    thickness: number,
   ): void;
+
+  // 标量
+  Scalar: Scalar;
+
+  // 形态学操作
+  getStructuringElement(shape: number, ksize: Size): Mat;
+  MORPH_RECT: number;
+  dilate(src: Mat, dst: Mat, kernel: Mat): void;
 
   // 其他常量
   CV_32FC2: number;
+  CV_8UC4: number;
+  CV_8UC3: number;
+  CV_8UC1: number;
+  CV_8S: number;
+  CV_8U: number;
   LINE_8: number;
 }
 

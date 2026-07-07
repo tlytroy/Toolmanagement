@@ -1,34 +1,18 @@
-// 简化版纸张检测器，专为testpic.jpg设计
-import * as cv from "@techstark/opencv-js";
+// 简化版纸张检测器
+// cv 实例由调用方注入（避免静态 import 导致 Vite 加载 24MB 文件阻塞模块图）
 import type { Point } from "./types";
 
 export class SimplePaperDetector {
-  private isCVReady = false;
+  private cv: any;
 
-  constructor() {
-    this.waitForCV();
-  }
-
-  private waitForCV(): Promise<void> {
-    return new Promise((resolve) => {
-      const check = () => {
-        if (cv.Mat && typeof cv.Mat === "function") {
-          this.isCVReady = true;
-          resolve();
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      check();
-    });
+  constructor(cvInstance: any) {
+    this.cv = cvInstance;
   }
 
   async detectPaperCorners(
     imageElement: HTMLImageElement,
   ): Promise<Point[] | null> {
-    if (!this.isCVReady) {
-      await this.waitForCV();
-    }
+    const cv = this.cv;
 
     try {
       // 读取图像
@@ -66,7 +50,7 @@ export class SimplePaperDetector {
       console.log("Found", contours.size(), "contours");
 
       // 寻找最大的四边形轮廓
-      let largestQuad = null;
+      let largestQuad: { contour: any; area: number; points: Point[] } | null = null;
       let maxArea = 0;
 
       for (let i = 0; i < contours.size(); i++) {
@@ -76,7 +60,6 @@ export class SimplePaperDetector {
         // 只考虑足够大的轮廓
         if (area > src.cols * src.rows * 0.05) {
           // 至少占图像的5%
-          // 多epsilon尝试近似为多边形（提高检测成功率）
           const epsilons = [0.01, 0.015, 0.02, 0.025, 0.03];
 
           for (const epsilon of epsilons) {
@@ -123,7 +106,7 @@ export class SimplePaperDetector {
         );
         const points = largestQuad.points;
         largestQuad.contour.delete();
-        return points as Point[];
+        return points;
       } else {
         console.log("❌ No paper detected");
         return null;
@@ -134,20 +117,16 @@ export class SimplePaperDetector {
     }
   }
 
-  private extractPoints(approx: cv.Mat): { x: number; y: number }[] {
-    const points: { x: number; y: number }[] = [];
+  private extractPoints(approx: any): Point[] {
+    const points: Point[] = [];
     for (let i = 0; i < approx.rows; i++) {
       const point = approx.ptr(i, 0);
       points.push({ x: point[0], y: point[1] });
     }
-
-    // 对四角进行排序：左上、右上、右下、左下
     return this.sortPoints(points);
   }
 
-  private sortPoints(
-    points: { x: number; y: number }[],
-  ): { x: number; y: number }[] {
+  private sortPoints(points: Point[]): Point[] {
     if (points.length !== 4) return points;
 
     // 按y坐标排序，y小的在上

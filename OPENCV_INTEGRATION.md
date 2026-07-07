@@ -57,6 +57,81 @@ OpenCV.js 功能已完全集成到校准页面中：
 
 当前使用的是最新稳定版本的 @techstark/opencv-js (^5.0.0-release.1)，确保了功能完整性和性能。
 
+## OpenCV.js 加载机制（重要）
+
+> ⚠️ 本节是 2026-07-07 修订后的**唯一正确**加载方式，旧的 `import('@techstark/opencv-js')` / `window.cv = cv` 模式已被废弃，详见 [DEVELOPMENT_GUIDE.md §二.6](DEVELOPMENT_GUIDE.md)。
+
+### 加载链路
+
+```
+index.html
+  └─ <script src="/opencv.js">           ← 经典脚本，UMD 挂 window.cv
+        └─ window.cv = cv(Module)         ← cv 是 async 函数 → window.cv 是 Promise
+
+src/lib/opencvLoader.ts#loadCv()
+  └─ 轮询 window.cv
+  └─ 展平嵌套 Promise（UMD 包装会套 1~2 层）
+  └─ 校验 cv.imread 存在
+
+src/hooks/useOpenCV.ts
+  └─ 调用 loadCv()，返回 { cv, loaded, error }
+
+业务组件（如 CalibrationPage）
+  └─ import { useOpenCV } from '@/hooks/useOpenCV'
+  └─ 拿到 cv 实例，调用 cv.imread() / cv.Mat 等
+```
+
+### 关键文件
+
+| 文件 | 角色 |
+|------|------|
+| `public/opencv.js` | 13MB UMD，wasm 内嵌，从 `node_modules/@techstark/opencv-js/dist/opencv.js` 复制 |
+| `src/lib/opencvLoader.ts` | 共享的 `loadCv()` 函数（轮询 + 展平） |
+| `src/hooks/useOpenCV.ts` | React hook，调用 `loadCv()` |
+| `index.html` | 在 module 脚本**之前**加 `<script src="/opencv.js">` |
+| `vite.config.ts` | **不要**加 `optimizeDeps.exclude`（已不再 import 该包） |
+
+### 严禁事项
+
+- ❌ `import cvReadyPromise from '@techstark/opencv-js'`（静态 import）
+- ❌ `await import('@techstark/opencv-js')`（动态 import，Vite dev 卡死）
+- ❌ 在组件里直接 `import "@techstark/opencv-js"`（同样卡死）
+- ❌ 假设 `window.cv` 是同步对象（实际是 Promise，必须 await）
+- ❌ 假设 `window.cv` resolve 一次就是 Module（可能嵌套 Promise，需展平）
+
+### 故障排查
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| 白屏 | 静态 import 卡死 Vite | 改用 `<script>` 标签 |
+| 永远"加载OpenCV中..." | 动态 import 卡死 Vite | 同上，**先** `rm -rf node_modules/.vite` |
+| `window.cv is undefined` | `<script>` 加载顺序错 | 把 `<script src="/opencv.js">` 放在 `<script type="module">` 之前 |
+| `cv.imread is not a function` | Promise 没展平 | 用 `loadCv()`，不要手写 await |
+
+### 复用模式
+
+新增 detector（如 `MyNewDetector.ts`）时：
+
+```typescript
+import type { Point } from "./types";
+import { loadCv } from "@/lib/opencvLoader";
+
+let cv: any = null;
+async function getCV() {
+  if (!cv) cv = await loadCv();
+  return cv;
+}
+
+export class MyNewDetector {
+  async detect(image: HTMLImageElement): Promise<Point[] | null> {
+    const cv = await getCV();
+    // ... 使用 cv.imread / cv.Mat 等
+  }
+}
+```
+
+不要在多个文件里复制粘贴"轮询 window.cv + 展平 Promise"的代码——一律走 `loadCv()`。
+
 ## 参考资源
 
 - OpenCV.js 官方文档

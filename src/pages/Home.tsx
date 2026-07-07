@@ -3,13 +3,12 @@ import { Stepper } from "@/components/Stepper";
 import { UploadPage } from "@/features/upload/UploadPage";
 import { CanvasEditor } from "@/components/CanvasEditor";
 import { ParamsPanel } from "@/features/params/ParamsPanel";
-import { CalibrationPage } from "@/features/calibration/CalibrationPage";
+import CalibrationPage from "@/features/calibration/CalibrationPage";
 import { SegmentationPage } from "@/features/segmentation/SegmentationPage";
 import { ExportPage } from "@/features/export/ExportPage";
 
 export function Home() {
   const step = useStore((s) => s.step);
-  // const imageUrl = useStore((s) => s.imageUrl); // 暂时注释掉未使用的变量
 
   const renderStep = () => {
     switch (step) {

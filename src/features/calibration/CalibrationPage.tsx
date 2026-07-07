@@ -1,10 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useOpenCV } from '@/hooks/useOpenCV'
+import { useStore } from '@/app/store'
 import { detectPaperCorners, perspectiveWarp, extractToolContours } from '@/lib/opencvUtils'
 import { Button } from '@/components/ui/Button'
+import { testPaperDetection } from '@/utils/testUtils'
+import { SimplePaperDetector } from '@/utils/simplePaperDetector'
 
 export default function CalibrationPage() {
-  const { cv, loaded } = useOpenCV()
+  const { cv, loaded, error } = useOpenCV()
+  const storedImageUrl = useStore((s) => s.imageUrl)
   // 调试参数（全放这，不用散在各个文件）
   const [cannyLow, setCannyLow] = useState(80)
   const [cannyHigh, setCannyHigh] = useState(220)
@@ -12,9 +16,20 @@ export default function CalibrationPage() {
   const [minArea, setMinArea] = useState(500)
   // 状态
   const [imgUrl, setImgUrl] = useState<string>()
-  const [corners, setCorners] = useState<any[]>()
+  const [corners, setCorners] = useState<any[] | null>(null)
   const [warpedUrl, setWarpedUrl] = useState<string>()
   const [debugUrl, setDebugUrl] = useState<string>()
+
+  // 当存储中的图片URL变化时，同步到本地状态
+  useEffect(() => {
+    if (storedImageUrl) {
+      setImgUrl(storedImageUrl)
+      // 重置处理状态
+      setCorners(null)
+      setWarpedUrl(undefined)
+      setDebugUrl(undefined)
+    }
+  }, [storedImageUrl])
 
   // 上传图片
   const handleUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -22,19 +37,33 @@ export default function CalibrationPage() {
     if (!file) return
     setImgUrl(URL.createObjectURL(file))
     // 重置状态
-    setCorners(undefined)
+    setCorners(null)
     setWarpedUrl(undefined)
     setDebugUrl(undefined)
   }, [])
 
   // 检测A4纸（带调试参数）
   const handleDetectPaper = useCallback(() => {
-    if (!cv || !imgUrl) return
+    // 防御1：校验OpenCV是否完全加载
+    if (!cv || !loaded) {
+      alert('OpenCV还在加载中，请稍后再试')
+      return
+    }
+    // 防御2：显式校验imread方法是否存在（避免cv对象残缺）
+    if (typeof cv.imread !== 'function') {
+      alert('OpenCV加载异常，请刷新页面重试')
+      console.error('cv.imread不存在，当前cv对象：', cv)
+      return
+    }
+    if (!imgUrl) return
+
     const img = new Image()
+    img.crossOrigin = 'anonymous' // 解决跨域导致的canvas污染问题
     img.src = imgUrl
+
+    // 关键：必须等图片完全加载后才能调用cv.imread
     img.onload = () => {
       try {
-        // 这里可以把调试参数传进去，不用改utils文件
         const corners = detectPaperCorners(cv, img, {
           cannyLow,
           cannyHigh,
@@ -45,7 +74,10 @@ export default function CalibrationPage() {
         alert(err.message)
       }
     }
-  }, [cv, imgUrl, cannyLow, cannyHigh, blurSize])
+    img.onerror = () => {
+      alert('图片加载失败，请重新上传')
+    }
+  }, [cv, loaded, imgUrl, cannyLow, cannyHigh, blurSize])
 
   // 透视校正
   const handleWarp = useCallback(() => {
@@ -61,11 +93,49 @@ export default function CalibrationPage() {
   // 提取工具轮廓
   const handleExtract = useCallback(async () => {
     if (!cv || !warpedUrl) return
-    const { contours, debugUrl } = await extractToolContours(cv, warpedUrl, minArea)
+    const result: any = await extractToolContours(cv, warpedUrl, minArea)
+    const { debugUrl } = result
     setDebugUrl(debugUrl)
   }, [cv, warpedUrl, minArea])
 
-  if (!loaded) return <div className="p-8">加载OpenCV中...</div>
+  // 测试简化检测器
+  const handleTestSimpleDetector = useCallback(async () => {
+    if (!imgUrl || !cv) return
+
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = imgUrl
+
+    img.onload = async () => {
+      try {
+        const detector = new SimplePaperDetector(cv)
+        const corners = await detector.detectPaperCorners(img)
+
+        if (corners) {
+          console.log('简化检测器结果:', corners)
+          alert(`简化检测器成功检测到纸张!\n左上: (${corners[0].x}, ${corners[0].y})\n右上: (${corners[1].x}, ${corners[1].y})\n右下: (${corners[2].x}, ${corners[2].y})\n左下: (${corners[3].x}, ${corners[3].y})`)
+        } else {
+          alert('简化检测器未能检测到纸张')
+        }
+      } catch (err: any) {
+        console.error('简化检测器错误:', err)
+        alert(`简化检测器出错: ${err.message}`)
+      }
+    }
+
+    img.onerror = () => {
+      alert('图片加载失败')
+    }
+  }, [imgUrl])
+
+  if (!loaded) return (
+    <div className="p-8">
+      <p className="text-lg">加载OpenCV中...</p>
+      {error && (
+        <p className="mt-3 text-red-600 whitespace-pre-wrap">⚠️ {error}</p>
+      )}
+    </div>
+  )
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -126,6 +196,7 @@ export default function CalibrationPage() {
         <Button onClick={handleDetectPaper} disabled={!imgUrl}>1. 检测A4纸</Button>
         <Button onClick={handleWarp} disabled={!corners}>2. 透视校正</Button>
         <Button onClick={handleExtract} disabled={!warpedUrl}>3. 提取工具轮廓</Button>
+        <Button onClick={handleTestSimpleDetector} disabled={!imgUrl}>测试简化检测器</Button>
       </div>
 
       {/* 预览区 */}

@@ -71,6 +71,8 @@ npm run dev
 
 访问 http://localhost:5173 查看应用。
 
+> ⚠️ 如果你修改了 OpenCV 相关代码后出现卡死/白屏，请执行 `rm -rf node_modules/.vite` 后再启动。
+
 ### 构建生产版本
 
 ```bash
@@ -86,8 +88,14 @@ src/
 ├── features/      # 功能模块
 ├── pages/         # 页面组件
 ├── utils/         # 工具函数
+├── hooks/         # React Hooks
+├── lib/           # 核心工具库（opencvUtils, opencvLoader）
 ├── workers/       # Web Worker（待实现）
 └── main.tsx       # 应用入口
+
+public/
+├── opencv.js      # OpenCV.js UMD（13MB，从 node_modules 复制，禁止 import 走 npm）
+└── testpic.jpg    # 测试图片
 ```
 
 ## 开发路线图
@@ -101,6 +109,7 @@ src/
 - 参数面板
 - 状态管理
 - **OpenCV.js 集成**：实现真实的纸张检测与透视校正 ✅
+- **OpenCV.js 加载机制重构**（2026-07-07）：改用 `<script>` 标签 + `loadCv()`，解决 Vite dev 卡死 13MB CJS 文件问题 ✅
 - **纸张检测功能完善**：多策略检测、调试信息、失败诊断 ✅
 - **校准页面实现**：自动检测、手动调整、尺寸标定 ✅
 - **SAM 分割模拟**：实现基于假数据的分割页面与流程验证 ✅
@@ -172,6 +181,14 @@ src/
    - 内存管理：及时释放OpenCV资源
    - 早期终止：找到高质量结果后提前结束后续策略
 
+## OpenCV.js 加载机制（重要）
+
+> ⚠️ 详见 [OPENCV_INTEGRATION.md](OPENCV_INTEGRATION.md) 和 [DEVELOPMENT_GUIDE.md §二.6](DEVELOPMENT_GUIDE.md)。
+
+**严禁**通过 npm 方式 `import('@techstark/opencv-js')` —— Vite dev 会因 13MB CJS 文件卡死。
+
+**正确方式**：`public/opencv.js`（从 npm 包复制的 UMD）+ `<script>` 标签 + `src/lib/opencvLoader.ts#loadCv()`。
+
 ## 依赖版本管理
 
 为了确保项目的稳定性和兼容性，我们定期更新依赖到最新的稳定版本。当前使用的版本：
@@ -180,7 +197,7 @@ src/
 - Vite: 8.1.3
 - TypeScript: 6.0.3
 - Fabric: 7.4.0
-- OpenCV.js (@techstark/opencv-js): 5.0.0-release.1
+- OpenCV.js (@techstark/opencv-js): 5.0.0-release.1（**仅在构建/复制时使用，运行时通过 public/opencv.js**）
 - Three.js: 0.185.1
 - Zustand: 5.0.14
 
@@ -196,6 +213,8 @@ src/
 2. 模块化：图像 / 矢量 / 3D 各自独立，后期替换实现
 3. 渐进增强：每一步都能打开浏览器看到效果
 4. 本地优先：所有重计算放 Web Worker，UI 不卡顿
+5. 单一调试入口：OpenCV 相关调试只在 `src/features/calibration/CalibrationPage.tsx` 进行
+6. 严禁 `import('@techstark/opencv-js')`：详见 OpenCV 加载机制
 
 ## 许可证
 

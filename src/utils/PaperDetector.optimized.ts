@@ -1,22 +1,11 @@
 import type { Point } from "./types";
+import { loadCv } from '@/lib/opencvLoader';
 
-// 动态导入OpenCV.js
 let cv: any = null;
 
 async function getCV() {
-  if (cv) return cv;
-
-  try {
-    const cvModule = await import("@techstark/opencv-js");
-    cv = cvModule.default || cvModule;
-    console.log("[PaperDetector] OpenCV.js loaded successfully");
-    return cv;
-  } catch (error) {
-    console.error("[PaperDetector] Failed to load OpenCV.js:", error);
-    throw new Error(
-      `Failed to load OpenCV.js: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  if (!cv) cv = await loadCv();
+  return cv;
 }
 
 export class PaperDetector {
