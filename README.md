@@ -1,8 +1,8 @@
 # Toolmanagement-web - 工具轮廓扫描 & 3D 收纳生成器
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![React](https://img.shields.io/badge/react-18+-blue.svg)
-![TypeScript](https://img.shields.io/badge/typescript-5+-blue.svg)
+![React](https://img.shields.io/badge/react-19+-blue.svg)
+![TypeScript](https://img.shields.io/badge/typescript-6+-blue.svg)
 
 ## 项目简介
 
@@ -40,7 +40,7 @@ Toolmanagement-web 是一个基于浏览器的工具轮廓扫描和 3D 收纳生
 
 ## 技术栈
 
-- **前端框架**：React 18 + TypeScript + Vite
+- **前端框架**：React 19 + TypeScript + Vite
 - **状态管理**：Zustand
 - **图形处理**：Fabric.js (SVG 编辑)
 - **计算机视觉**：OpenCV.js (WASM)
@@ -161,13 +161,13 @@ src/
 
 为了确保项目的稳定性和兼容性，我们定期更新依赖到最新的稳定版本。当前使用的版本：
 
-- React & React DOM: 18.3.1
-- Vite: 5.4.21
-- TypeScript: 5.9.3
-- Fabric: 5.5.2
+- React & React DOM: 19.2.7
+- Vite: 8.1.3
+- TypeScript: 6.0.3
+- Fabric: 7.4.0
 - OpenCV.js (@techstark/opencv-js): 5.0.0-release.1
 - Three.js: 0.185.1
-- Zustand: 4.5.7
+- Zustand: 5.0.14
 
 我们会定期检查并更新依赖，确保使用最新的安全补丁和功能改进。详细信息请参阅 [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) 中的依赖管理策略部分。
 

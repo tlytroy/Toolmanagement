@@ -22,31 +22,31 @@ OpenCV 官方没有原生发布 npm 包，浏览器端通常用两种方式：
 - Vite 需排除预构建（避免把 wasm 打进 bundle），已在 `vite.config.ts` 中配置
 
 ### 最近的依赖升级
-项目依赖已于 2026年7月6日 升级到以下版本：
-- React & React DOM: 18.3.1 (从 18.2.0 升级)
-- Vite: 5.4.21 (从 5.2.0 升级)
-- TypeScript: 5.9.3 (从 5.2.2 升级)
-- Fabric: 5.5.2 (从 5.3.0 升级)
-- OpenCV.js (@techstark/opencv-js): 5.0.0-release.1 (从 4.12.0-release.1 升级)
-- Three.js: 0.185.1 (从 0.154.0 升级)
-- Zustand: 4.5.7 (从 4.5.2 升级)
-- @vitejs/plugin-react: 4.7.0 (从 4.2.1 升级)
-- @types/react: 18.3.31 (从 18.2.66 升级)
-- @types/react-dom: 18.3.7 (从 18.2.22 升级)
-- @types/three: 0.185.0 (从 0.154.0 升级)
+项目依赖已于 2026年7月7日 升级到以下版本：
+- React & React DOM: 19.2.7 (从 18.3.1 升级)
+- Vite: 8.1.3 (从 5.4.21 升级)
+- TypeScript: 6.0.3 (从 5.9.3 升级)
+- Fabric: 7.4.0 (从 5.5.2 升级)
+- OpenCV.js (@techstark/opencv-js): 5.0.0-release.1 (保持不变)
+- Three.js: 0.185.1 (保持不变)
+- Zustand: 5.0.14 (从 4.5.7 升级)
+- @vitejs/plugin-react: 6.0.3 (从 4.7.0 升级)
+- @types/react: 19.2.17 (从 18.3.31 升级)
+- @types/react-dom: 19.2.3 (从 18.3.7 升级)
+- @types/three: 0.185.0 (保持不变)
 
 ### 依赖版本警告处理
-我们定期检查并更新依赖，以避免使用过时或存在安全问题的版本。当前需要注意的版本更新：
+我们定期检查并更新依赖，以避免使用过时或存在安全问题的版本。所有建议的升级都已经完成：
 
-- @types/react: 建议升级到 v19.x
-- @types/react-dom: 建议升级到 v19.x
-- @vitejs/plugin-react: 建议升级到 v6.x
-- fabric: 建议升级到 v7.x
-- react: 建议升级到 v19.x
-- react-dom: 建议升级 to v19.x
-- typescript: 建议升级到 v6.x
-- vite: 建议升级到 v8.x
-- zustand: 建议升级到 v5.x
+✅ @types/react: 已升级到 v19.2.17
+✅ @types/react-dom: 已升级到 v19.2.3
+✅ @vitejs/plugin-react: 已升级到 v6.0.3
+✅ fabric: 已升级到 v7.4.0
+✅ react: 已升级到 v19.2.7
+✅ react-dom: 已升级到 v19.2.7
+✅ typescript: 已升级到 v6.0.3
+✅ vite: 已升级到 v8.1.3
+✅ zustand: 已升级到 v5.0.14
 
 在升级依赖时，我们需要：
 1. 检查兼容性：确保新版本与现有代码兼容
