@@ -89,7 +89,7 @@ npm install package@major-version
 
 ### 核心技术集成状态
 1. ✅ OpenCV.js - 纸张检测与透视校正（已完成完整功能）
-2. 🔄 SAM (Segment Anything) - AI 工具轮廓提取（占位实现）
+2. ✅ SAM (Segment Anything) - AI 工具轮廓提取（已完成基础集成）
 3. ⬜ Clipper.js - 轮廓偏移与布尔运算
 4. ⬜ Three.js + OpenCASCADE - 3D 建模与渲染
 
@@ -243,11 +243,11 @@ npm install package@major-version
 5. ✅ 添加自动化测试验证功能正确性
 
 ### 第二阶段：集成 SAM 分割模型
-1. 集成 SAM ONNX 模型到浏览器环境
-2. 实现点击生成掩码功能
-3. 轮廓提取和优化（从掩码生成矢量路径）
-4. 模型缓存机制（IndexedDB 存储模型文件）
-5. 性能优化（Web Workers 或 WebGL 加速）
+1. ✅ 集成 SAM ONNX 模型到浏览器环境
+2. ✅ 实现点击生成掩码功能
+3. 🔄 轮廓提取和优化（从掩码生成矢量路径）
+4. ⬜ 模型缓存机制（IndexedDB 存储模型文件）
+5. ⬜ 性能优化（Web Workers 或 WebGL 加速）
 
 ### 第三阶段：轮廓处理功能
 1. 集成 Clipper.js 进行轮廓偏移和布尔运算
