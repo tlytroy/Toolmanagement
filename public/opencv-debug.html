@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenCV.js 测试页面</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        button { padding: 10px 15px; margin: 5px; background-color: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        .result { margin-top: 10px; padding: 10px; border-radius: 3px; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        canvas { border: 1px solid #ccc; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>OpenCV.js 测试页面</h1>
+
+        <div class="test-section">
+            <h2>基础测试</h2>
+            <button id="testBasic">测试 OpenCV.js 基础功能</button>
+            <div id="basicResult"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>图像处理测试</h2>
+            <input type="file" id="imageInput" accept="image/*">
+            <div id="imagePreview"></div>
+            <button id="testImageProcessing" disabled>测试图像处理</button>
+            <div id="processingResult"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>纸张检测测试</h2>
+            <button id="testPaperDetection" disabled>测试纸张检测</button>
+            <div id="detectionResult"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as cv from '/node_modules/@techstark/opencv-js/dist/opencv.js';
+        import { testOpenCV, checkOpenCVMethods } from './src/utils/testOpenCV.ts';
+        import { PaperDetector } from './src/utils/PaperDetector.ts';
+
+        let currentImage = null;
+
+        // 基础测试
+        document.getElementById('testBasic').addEventListener('click', async () => {
+            const resultDiv = document.getElementById('basicResult');
+            try {
+                resultDiv.innerHTML = '<div class="result">测试中...</div>';
+
+                // 测试OpenCV基础功能
+                const isOpenCVWorking = await testOpenCV();
+
+                if (isOpenCVWorking) {
+                    resultDiv.innerHTML = '<div class="result success">✅ OpenCV.js 基础功能测试通过</div>';
+
+                    // 检查具体方法
+                    checkOpenCVMethods();
+                } else {
+                    resultDiv.innerHTML = '<div class="result error">❌ OpenCV.js 基础功能测试失败</div>';
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">❌ 测试出错: ${error.message}</div>`;
+                console.error('Test error:', error);
+            }
+        });
+
+        // 图像输入处理
+        document.getElementById('imageInput').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    currentImage = new Image();
+                    currentImage.onload = () => {
+                        // 显示预览
+                        const previewDiv = document.getElementById('imagePreview');
+                        previewDiv.innerHTML = `
+                            <h3>图像预览:</h3>
+                            <img src="${e.target.result}" style="max-width: 300px; max-height: 300px;" />
+                        `;
+
+                        // 启用处理按钮
+                        document.getElementById('testImageProcessing').disabled = false;
+                        document.getElementById('testPaperDetection').disabled = false;
+                    };
+                    currentImage.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 图像处理测试
+        document.getElementById('testImageProcessing').addEventListener('click', async () => {
+            if (!currentImage) {
+                alert('请先选择一张图片');
+                return;
+            }
+
+            const resultDiv = document.getElementById('processingResult');
+            try {
+                resultDiv.innerHTML = '<div class="result">图像处理测试中...</div>';
+
+                // 确保OpenCV已加载
+                if (!cv) {
+                    throw new Error('OpenCV.js 未加载');
+                }
+
+                // 测试 imread 方法
+                console.log('Testing imread...');
+                if (typeof cv.imread !== 'function') {
+                    throw new Error('cv.imread is not a function');
+                }
+
+                // 尝试读取图像
+                const src = cv.imread(currentImage);
+                console.log('Image read successfully, size:', src.cols, 'x', src.rows);
+
+                // 灰度转换测试
+                const gray = new cv.Mat();
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                console.log('Grayscale conversion successful');
+
+                // 高斯模糊测试
+                const blurred = new cv.Mat();
+                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+                console.log('Gaussian blur successful');
+
+                // 显示结果
+                const canvas = document.createElement('canvas');
+                canvas.width = blurred.cols;
+                canvas.height = blurred.rows;
+                cv.imshow(canvas, blurred);
+
+                resultDiv.innerHTML = `
+                    <div class="result success">
+                        ✅ 图像处理测试通过<br>
+                        原始尺寸: ${src.cols} x ${src.rows}<br>
+                        处理后尺寸: ${blurred.cols} x ${blurred.rows}
+                    </div>
+                    <h3>处理结果:</h3>
+                    ${canvas.outerHTML}
+                `;
+
+                // 清理内存
+                src.delete();
+                gray.delete();
+                blurred.delete();
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">❌ 图像处理测试失败: ${error.message}</div>`;
+                console.error('Processing error:', error);
+            }
+        });
+
+        // 纸张检测测试
+        document.getElementById('testPaperDetection').addEventListener('click', async () => {
+            if (!currentImage) {
+                alert('请先选择一张图片');
+                return;
+            }
+
+            const resultDiv = document.getElementById('detectionResult');
+            try {
+                resultDiv.innerHTML = '<div class="result">纸张检测测试中...</div>';
+
+                const detector = new PaperDetector();
+
+                // 等待初始化完成
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                const result = await detector.detectPaperCorners(currentImage, true);
+
+                if (result.corners) {
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            ✅ 纸张检测成功<br>
+                            检测到角点: ${result.corners.length} 个
+                        </div>
+                        <div>角点坐标:</div>
+                        <pre>${JSON.stringify(result.corners, null, 2)}</pre>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            ❌ 纸张检测失败<br>
+                            ${result.debugInfo[result.debugInfo.length - 1]?.reason || '未知错误'}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">❌ 纸张检测测试失败: ${error.message}</div>`;
+                console.error('Detection error:', error);
+            }
+        });
+    </script>
+</body>
+</html>

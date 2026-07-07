@@ -86,6 +86,8 @@ npm install package@major-version
 5. ✅ 基础的 Fabric.js 轮廓编辑器
 6. ✅ 参数配置面板
 7. ✅ 导出选项界面
+8. ✅ 纸张检测调试页面
+9. ✅ 手动调整功能
 
 ### 核心技术集成状态
 1. ✅ OpenCV.js - 纸张检测与透视校正（已完成完整功能）
