@@ -1,132 +1,98 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useOpenCV } from '@/hooks/useOpenCV'
 import { useStore } from '@/app/store'
-import { detectPaperCorners, perspectiveWarp, extractToolContours } from '@/lib/opencvUtils'
+import { detectPaperCorners, perspectiveWarp, extractToolContours, type PaperDetection } from '@/lib/opencvUtils'
 import { Button } from '@/components/ui/Button'
-import { testPaperDetection } from '@/utils/testUtils'
-import { SimplePaperDetector } from '@/utils/simplePaperDetector'
 
 export default function CalibrationPage() {
   const { cv, loaded, error } = useOpenCV()
   const storedImageUrl = useStore((s) => s.imageUrl)
-  // 调试参数（全放这，不用散在各个文件）
-  const [cannyLow, setCannyLow] = useState(80)
-  const [cannyHigh, setCannyHigh] = useState(220)
-  const [blurSize, setBlurSize] = useState(7)
-  const [minArea, setMinArea] = useState(500)
-  // 状态
+
   const [imgUrl, setImgUrl] = useState<string>()
-  const [corners, setCorners] = useState<any[] | null>(null)
+  const [detect, setDetect] = useState<PaperDetection | null>(null)
   const [warpedUrl, setWarpedUrl] = useState<string>()
   const [debugUrl, setDebugUrl] = useState<string>()
+  const [detecting, setDetecting] = useState(false)
+  const [detectError, setDetectError] = useState<string | null>(null)
+  // 防止并发/StrictMode 下重复检测
+  const runningRef = useRef(false)
 
-  // 当存储中的图片URL变化时，同步到本地状态
+  // store 中的图片 URL 变化时同步本地状态并清空旧结果
   useEffect(() => {
     if (storedImageUrl) {
       setImgUrl(storedImageUrl)
-      // 重置处理状态
-      setCorners(null)
+      setDetect(null)
       setWarpedUrl(undefined)
       setDebugUrl(undefined)
+      setDetectError(null)
     }
   }, [storedImageUrl])
 
-  // 上传图片
+  // 自动检测：图片就绪后自动跑，无需点击
+  const runDetection = useCallback(() => {
+    if (!cv || !loaded || !imgUrl || runningRef.current) return
+    runningRef.current = true
+    setDetecting(true)
+    setDetectError(null)
+
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const result = detectPaperCorners(cv, img)
+        setDetect(result)
+        if (!result) {
+          setDetectError('未检测到纸张，请调整光线/角度后重新上传，或点击"重新检测"')
+        }
+      } catch (err: any) {
+        console.error('[CalibrationPage] detectPaperCorners threw:', err)
+        setDetectError(err?.message || '检测失败')
+      } finally {
+        setDetecting(false)
+        runningRef.current = false
+      }
+    }
+    img.onerror = () => {
+      setDetecting(false)
+      runningRef.current = false
+      setDetectError('图片加载失败，请重新上传')
+    }
+    img.src = imgUrl
+  }, [cv, loaded, imgUrl])
+
+  // 图片/OpenCV 就绪即自动触发检测
+  useEffect(() => {
+    if (imgUrl && loaded && cv) runDetection()
+  }, [imgUrl, loaded, cv, runDetection])
+
+  // 上传（页内也允许换图）
   const handleUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     setImgUrl(URL.createObjectURL(file))
-    // 重置状态
-    setCorners(null)
+    setDetect(null)
     setWarpedUrl(undefined)
     setDebugUrl(undefined)
+    setDetectError(null)
   }, [])
-
-  // 检测A4纸（带调试参数）
-  const handleDetectPaper = useCallback(() => {
-    // 防御1：校验OpenCV是否完全加载
-    if (!cv || !loaded) {
-      alert('OpenCV还在加载中，请稍后再试')
-      return
-    }
-    // 防御2：显式校验imread方法是否存在（避免cv对象残缺）
-    if (typeof cv.imread !== 'function') {
-      alert('OpenCV加载异常，请刷新页面重试')
-      console.error('cv.imread不存在，当前cv对象：', cv)
-      return
-    }
-    if (!imgUrl) return
-
-    const img = new Image()
-    img.crossOrigin = 'anonymous' // 解决跨域导致的canvas污染问题
-    img.src = imgUrl
-
-    // 关键：必须等图片完全加载后才能调用cv.imread
-    img.onload = () => {
-      try {
-        const corners = detectPaperCorners(cv, img, {
-          cannyLow,
-          cannyHigh,
-          blurSize,
-        })
-        setCorners(corners)
-      } catch (err: any) {
-        alert(err.message)
-      }
-    }
-    img.onerror = () => {
-      alert('图片加载失败，请重新上传')
-    }
-  }, [cv, loaded, imgUrl, cannyLow, cannyHigh, blurSize])
 
   // 透视校正
   const handleWarp = useCallback(() => {
-    if (!cv || !imgUrl || !corners) return
+    if (!cv || !imgUrl || !detect) return
     const img = new Image()
     img.src = imgUrl
     img.onload = () => {
-      const { warpedUrl } = perspectiveWarp(cv, img, corners)
-      setWarpedUrl(warpedUrl)
+      const { warpedUrl: w } = perspectiveWarp(cv, img, detect.corners)
+      setWarpedUrl(w)
     }
-  }, [cv, imgUrl, corners])
+  }, [cv, imgUrl, detect])
 
   // 提取工具轮廓
   const handleExtract = useCallback(async () => {
     if (!cv || !warpedUrl) return
-    const result: any = await extractToolContours(cv, warpedUrl, minArea)
-    const { debugUrl } = result
-    setDebugUrl(debugUrl)
-  }, [cv, warpedUrl, minArea])
-
-  // 测试简化检测器
-  const handleTestSimpleDetector = useCallback(async () => {
-    if (!imgUrl || !cv) return
-
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.src = imgUrl
-
-    img.onload = async () => {
-      try {
-        const detector = new SimplePaperDetector(cv)
-        const corners = await detector.detectPaperCorners(img)
-
-        if (corners) {
-          console.log('简化检测器结果:', corners)
-          alert(`简化检测器成功检测到纸张!\n左上: (${corners[0].x}, ${corners[0].y})\n右上: (${corners[1].x}, ${corners[1].y})\n右下: (${corners[2].x}, ${corners[2].y})\n左下: (${corners[3].x}, ${corners[3].y})`)
-        } else {
-          alert('简化检测器未能检测到纸张')
-        }
-      } catch (err: any) {
-        console.error('简化检测器错误:', err)
-        alert(`简化检测器出错: ${err.message}`)
-      }
-    }
-
-    img.onerror = () => {
-      alert('图片加载失败')
-    }
-  }, [imgUrl])
+    const result: any = await extractToolContours(cv, warpedUrl, 300)
+    setDebugUrl(result.debugUrl)
+  }, [cv, warpedUrl])
 
   if (!loaded) return (
     <div className="p-8">
@@ -139,67 +105,50 @@ export default function CalibrationPage() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">纸张校准 & 轮廓检测调试</h1>
+      <h1 className="text-2xl font-bold mb-2">纸张校准 & 轮廓检测</h1>
+      <p className="mb-4 text-gray-600">
+        导入照片后系统会自动识别 A4 纸，无需手动调整参数。
+      </p>
 
-      {/* 调试参数区（所有调参都在这，不用翻文件） */}
-      <div className="grid grid-cols-4 gap-4 mb-8 p-4 bg-gray-50 rounded-lg">
-        <div>
-          <label className="block text-sm mb-1">Canny低阈值: {cannyLow}</label>
-          <input
-            type="range"
-            min="30"
-            max="150"
-            value={cannyLow}
-            onChange={(e) => setCannyLow(Number(e.target.value))}
-            className="w-full"
-          />
-        </div>
-        <div>
-          <label className="block text-sm mb-1">Canny高阈值: {cannyHigh}</label>
-          <input
-            type="range"
-            min="150"
-            max="300"
-            value={cannyHigh}
-            onChange={(e) => setCannyHigh(Number(e.target.value))}
-            className="w-full"
-          />
-        </div>
-        <div>
-          <label className="block text-sm mb-1">模糊核大小: {blurSize}</label>
-          <input
-            type="range"
-            min="3"
-            max="15"
-            step="2"
-            value={blurSize}
-            onChange={(e) => setBlurSize(Number(e.target.value))}
-            className="w-full"
-          />
-        </div>
-        <div>
-          <label className="block text-sm mb-1">最小轮廓面积: {minArea}</label>
-          <input
-            type="range"
-            min="100"
-            max="2000"
-            value={minArea}
-            onChange={(e) => setMinArea(Number(e.target.value))}
-            className="w-full"
-          />
-        </div>
-      </div>
-
-      {/* 操作区 */}
-      <div className="flex gap-4 mb-8">
+      <div className="flex gap-4 mb-6 flex-wrap items-center">
         <input type="file" accept="image/*" onChange={handleUpload} />
-        <Button onClick={handleDetectPaper} disabled={!imgUrl}>1. 检测A4纸</Button>
-        <Button onClick={handleWarp} disabled={!corners}>2. 透视校正</Button>
+        <Button onClick={runDetection} disabled={!imgUrl || detecting}>
+          {detecting ? '识别中…' : '重新检测'}
+        </Button>
+        <Button onClick={handleWarp} disabled={!detect}>2. 透视校正</Button>
         <Button onClick={handleExtract} disabled={!warpedUrl}>3. 提取工具轮廓</Button>
-        <Button onClick={handleTestSimpleDetector} disabled={!imgUrl}>测试简化检测器</Button>
       </div>
 
-      {/* 预览区 */}
+      {detecting && <p className="mb-4 text-blue-600">正在自动识别纸张…</p>}
+      {!detecting && detectError && (
+        <p className="mb-4 text-red-600 whitespace-pre-wrap">⚠️ {detectError}</p>
+      )}
+      {!detecting && !detectError && detect && (
+        <>
+          <p className="mb-2 text-green-600">
+            ✅ 已自动识别纸张四角（
+            {detect.mode === "strong"
+              ? "首轮强命中"
+              : `${detect.methodCount} 个方法族共识`}
+            ，置信度 {Math.round(detect.confidence * 100)}%）
+          </p>
+          {detect.skew.message && (
+            <p
+              className={`mb-2 whitespace-pre-wrap ${
+                detect.skew.level === 'severe' ? 'text-red-600' : 'text-amber-600'
+              }`}
+            >
+              {detect.skew.message}
+            </p>
+          )}
+          {detect.lowConfidence && (
+            <p className="mb-2 text-amber-500">
+              ⚠️ 仅单方法命中，结果仅供参考，建议重新拍摄确认。
+            </p>
+          )}
+        </>
+      )}
+
       <div className="grid grid-cols-2 gap-8">
         {imgUrl && (
           <div>
@@ -207,14 +156,14 @@ export default function CalibrationPage() {
             <img src={imgUrl} className="max-w-full border rounded" />
           </div>
         )}
-        {corners && (
+        {detect && (
           <div>
             <h3 className="font-medium mb-2">A4四角坐标</h3>
             <div className="text-sm space-y-1">
-              <p>左上: ({corners[0].x}, {corners[0].y})</p>
-              <p>右上: ({corners[1].x}, {corners[1].y})</p>
-              <p>右下: ({corners[2].x}, {corners[2].y})</p>
-              <p>左下: ({corners[3].x}, {corners[3].y})</p>
+              <p>左上: ({detect.corners[0].x}, {detect.corners[0].y})</p>
+              <p>右上: ({detect.corners[1].x}, {detect.corners[1].y})</p>
+              <p>右下: ({detect.corners[2].x}, {detect.corners[2].y})</p>
+              <p>左下: ({detect.corners[3].x}, {detect.corners[3].y})</p>
             </div>
           </div>
         )}
