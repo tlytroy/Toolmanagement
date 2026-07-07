@@ -12,10 +12,5 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['@techstark/opencv-js']
-  },
-  build: {
-    rollupOptions: {
-      external: ['@techstark/opencv-js']
-    }
   }
 })

@@ -26,6 +26,14 @@ export function Stepper() {
           {i + 1}. {s}
         </button>
       ))}
+      <button
+        onClick={() => setStep("opencv-test" as any)}
+        className={`px-3 py-1 rounded ${
+          step === "opencv-test" ? "bg-green-600 text-white" : "bg-white"
+        }`}
+      >
+        Test
+      </button>
     </div>
   );
 }

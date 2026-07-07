@@ -5,8 +5,41 @@
 // 3. 轮廓查找 → 凸四边形拟合（不要求矩形，只要求凸+角度合理）
 // 4. 选最佳候选（面积大 + 形状规则）
 // 5. 角点排序 + 透视校正
-import * as cv from '@techstark/opencv-js';
 import type { Point } from './types';
+
+// 动态导入OpenCV.js，因为它可能作为Promise返回
+let cv: any = null;
+
+async function getCV() {
+  if (cv) return cv;
+
+  try {
+    const cvModule = await import('@techstark/opencv-js');
+    // 处理可能的Promise情况
+    cv = cvModule.default || cvModule;
+
+    // 等待OpenCV初始化完成
+    if (cv.onRuntimeInitialized) {
+      await new Promise(resolve => {
+        if (typeof cv.onRuntimeInitialized === 'function') {
+          const originalCallback = cv.onRuntimeInitialized;
+          cv.onRuntimeInitialized = () => {
+            originalCallback();
+            resolve(undefined);
+          };
+        } else {
+          resolve(undefined);
+        }
+      });
+    }
+
+    console.log('[PaperDetector] OpenCV.js loaded successfully');
+    return cv;
+  } catch (error) {
+    console.error('[PaperDetector] Failed to load OpenCV.js:', error);
+    throw new Error(`Failed to load OpenCV.js: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 export interface DetectionDebugInfo {
   strategy: string;
@@ -16,20 +49,22 @@ export interface DetectionDebugInfo {
 }
 
 export class PaperDetector {
-  private cv: any = null;
   private initialized = false;
 
   constructor() {
-    this.init();
+    // 初始化在首次使用时进行
   }
 
-  private async init() {
+  private async ensureInitialized() {
+    if (this.initialized) return;
+
     try {
-      this.cv = cv;
+      cv = await getCV();
       this.initialized = true;
       console.log('[PaperDetector] OpenCV.js ready');
     } catch (error) {
       console.error('[PaperDetector] Failed to initialize OpenCV.js:', error);
+      throw error;
     }
   }
 
@@ -43,14 +78,16 @@ export class PaperDetector {
     imageElement: HTMLImageElement,
     debug = false
   ): Promise<{ corners: Point[] | null; debugInfo: DetectionDebugInfo[] }> {
-    if (!this.initialized) {
+    await this.ensureInitialized();
+
+    if (!this.initialized || !cv) {
       throw new Error('OpenCV.js not initialized');
     }
 
     const debugInfos: DetectionDebugInfo[] = [];
 
     try {
-      const src = this.cv.imread(imageElement);
+      const src = cv.imread(imageElement);
       const originalWidth = src.cols;
       const originalHeight = src.rows;
 
@@ -60,21 +97,21 @@ export class PaperDetector {
       const maxSize = 800;
       if (Math.max(originalWidth, originalHeight) > maxSize) {
         scale = maxSize / Math.max(originalWidth, originalHeight);
-        const newSize = new this.cv.Size(
+        const newSize = new cv.Size(
           Math.round(originalWidth * scale),
           Math.round(originalHeight * scale)
         );
-        processedSrc = new this.cv.Mat();
-        this.cv.resize(src, processedSrc, newSize, 0, 0, this.cv.INTER_AREA);
+        processedSrc = new cv.Mat();
+        cv.resize(src, processedSrc, newSize, 0, 0, cv.INTER_AREA);
       }
 
       // 灰度
-      const gray = new this.cv.Mat();
-      this.cv.cvtColor(processedSrc, gray, this.cv.COLOR_RGBA2GRAY);
+      const gray = new cv.Mat();
+      cv.cvtColor(processedSrc, gray, cv.COLOR_RGBA2GRAY);
 
       // 模糊降噪
-      const blurred = new this.cv.Mat();
-      this.cv.GaussianBlur(gray, blurred, new this.cv.Size(5, 5), 0);
+      const blurred = new cv.Mat();
+      cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
 
       // ——— 多策略分割 ———
       const strategies: Array<{
@@ -84,11 +121,11 @@ export class PaperDetector {
         {
           name: 'Otsu阈值',
           apply: (b) => {
-            const binary = new this.cv.Mat();
-            this.cv.threshold(b, binary, 0, 255, this.cv.THRESH_BINARY + this.cv.THRESH_OTSU);
+            const binary = new cv.Mat();
+            cv.threshold(b, binary, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
             // 纸是白的，背景是暗的 → invert 让纸变黑（轮廓包围纸）
-            const inv = new this.cv.Mat();
-            this.cv.bitwise_not(binary, inv);
+            const inv = new cv.Mat();
+            cv.bitwise_not(binary, inv);
             binary.delete();
             return inv;
           }
@@ -96,10 +133,10 @@ export class PaperDetector {
         {
           name: '自适应阈值(GAUSSIAN)',
           apply: (b) => {
-            const binary = new this.cv.Mat();
-            this.cv.adaptiveThreshold(b, binary, 255, this.cv.ADAPTIVE_THRESH_GAUSSIAN_C, this.cv.THRESH_BINARY, 15, 5);
-            const inv = new this.cv.Mat();
-            this.cv.bitwise_not(binary, inv);
+            const binary = new cv.Mat();
+            cv.adaptiveThreshold(b, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 5);
+            const inv = new cv.Mat();
+            cv.bitwise_not(binary, inv);
             binary.delete();
             return inv;
           }
@@ -107,10 +144,10 @@ export class PaperDetector {
         {
           name: '自适应阈值(MEAN)',
           apply: (b) => {
-            const binary = new this.cv.Mat();
-            this.cv.adaptiveThreshold(b, binary, 255, this.cv.ADAPTIVE_THRESH_MEAN_C, this.cv.THRESH_BINARY, 31, 10);
-            const inv = new this.cv.Mat();
-            this.cv.bitwise_not(binary, inv);
+            const binary = new cv.Mat();
+            cv.adaptiveThreshold(b, binary, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 31, 10);
+            const inv = new cv.Mat();
+            cv.bitwise_not(binary, inv);
             binary.delete();
             return inv;
           }
@@ -118,11 +155,11 @@ export class PaperDetector {
         {
           name: 'Canny边缘(低阈值)',
           apply: (b) => {
-            const edges = new this.cv.Mat();
-            this.cv.Canny(b, edges, 30, 100);
-            const kernel = this.cv.Mat.ones(7, 7, this.cv.CV_8UC1);
-            const closed = new this.cv.Mat();
-            this.cv.morphologyEx(edges, closed, this.cv.MORPH_CLOSE, kernel);
+            const edges = new cv.Mat();
+            cv.Canny(b, edges, 30, 100);
+            const kernel = cv.Mat.ones(7, 7, cv.CV_8UC1);
+            const closed = new cv.Mat();
+            cv.morphologyEx(edges, closed, cv.MORPH_CLOSE, kernel);
             edges.delete();
             kernel.delete();
             return closed;
@@ -131,11 +168,11 @@ export class PaperDetector {
         {
           name: 'Canny边缘(中阈值)',
           apply: (b) => {
-            const edges = new this.cv.Mat();
-            this.cv.Canny(b, edges, 50, 150);
-            const kernel = this.cv.Mat.ones(5, 5, this.cv.CV_8UC1);
-            const closed = new this.cv.Mat();
-            this.cv.morphologyEx(edges, closed, this.cv.MORPH_CLOSE, kernel);
+            const edges = new cv.Mat();
+            cv.Canny(b, edges, 50, 150);
+            const kernel = cv.Mat.ones(5, 5, cv.CV_8UC1);
+            const closed = new cv.Mat();
+            cv.morphologyEx(edges, closed, cv.MORPH_CLOSE, kernel);
             edges.delete();
             kernel.delete();
             return closed;
@@ -144,15 +181,15 @@ export class PaperDetector {
         {
           name: 'CLAHE+自适应阈值',
           apply: (b) => {
-            const clahe = new this.cv.CLAHE();
+            const clahe = new cv.CLAHE();
             clahe.setClipLimit(3.0);
-            clahe.setTilesGridSize(new this.cv.Size(8, 8));
-            const enhanced = new this.cv.Mat();
+            clahe.setTilesGridSize(new cv.Size(8, 8));
+            const enhanced = new cv.Mat();
             clahe.apply(b, enhanced);
-            const binary = new this.cv.Mat();
-            this.cv.adaptiveThreshold(enhanced, binary, 255, this.cv.ADAPTIVE_THRESH_GAUSSIAN_C, this.cv.THRESH_BINARY, 21, 8);
-            const inv = new this.cv.Mat();
-            this.cv.bitwise_not(binary, inv);
+            const binary = new cv.Mat();
+            cv.adaptiveThreshold(enhanced, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 21, 8);
+            const inv = new cv.Mat();
+            cv.bitwise_not(binary, inv);
             binary.delete();
             enhanced.delete();
             return inv;
@@ -182,15 +219,15 @@ export class PaperDetector {
         }
 
         // 查找轮廓
-        const contours = new this.cv.MatVector();
-        const hierarchy = new this.cv.Mat();
-        this.cv.findContours(mask, contours, hierarchy, this.cv.RETR_EXTERNAL, this.cv.CHAIN_APPROX_SIMPLE);
+        const contours = new cv.MatVector();
+        const hierarchy = new cv.Mat();
+        cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
         // 按面积降序排列，只看前 10 个最大的
         const candidates: Array<{ contourIdx: number; area: number }> = [];
         for (let i = 0; i < contours.size(); i++) {
           const contour = contours.get(i);
-          const area = this.cv.contourArea(contour);
+          const area = cv.contourArea(contour);
           if (area > minArea) {
             candidates.push({ contourIdx: i, area });
           }
@@ -202,15 +239,15 @@ export class PaperDetector {
         // 对每个候选轮廓，尝试多种 epsilon 逼近到 4 点
         for (const cand of candidates.slice(0, 10)) {
           const contour = contours.get(cand.contourIdx);
-          const perimeter = this.cv.arcLength(contour, true);
+          const perimeter = cv.arcLength(contour, true);
 
           // 从小 epsilon 开始尝试，逐步放宽直到得到 4 点
           // epsilon = 近似精度，越小越贴合原始轮廓
           const epsilons = [0.01, 0.02, 0.03, 0.04, 0.05];
 
           for (const eps of epsilons) {
-            const approx = new this.cv.Mat();
-            this.cv.approxPolyDP(contour, approx, eps * perimeter, true);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(contour, approx, eps * perimeter, true);
 
             if (approx.rows === 4) {
               // ——— 关键改进：不要求矩形，只要求凸四边形 + 合理角度 ———
@@ -396,7 +433,7 @@ export class PaperDetector {
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
-    this.cv.imshow(canvas, mat);
+    cv.imshow(canvas, mat);
     const url = canvas.toDataURL('image/jpeg', 0.7);
     canvas.remove();
     return url;
@@ -433,12 +470,14 @@ export class PaperDetector {
     corners: Point[],
     paperFormat = 'A4'
   ): Promise<string> {
-    if (!this.initialized) {
+    await this.ensureInitialized();
+
+    if (!this.initialized || !cv) {
       throw new Error('OpenCV.js not initialized');
     }
 
     try {
-      const src = this.cv.imread(imageElement);
+      const src = cv.imread(imageElement);
 
       const paperSizes: Record<string, { width: number; height: number }> = {
         A4: { width: 210, height: 297 },
@@ -453,37 +492,37 @@ export class PaperDetector {
       const outputHeight = Math.round(outputWidth * (size.height / size.width));
 
       // 源角点
-      const srcPts = new this.cv.Mat(4, 1, this.cv.CV_32FC2);
+      const srcPts = new cv.Mat(4, 1, cv.CV_32FC2);
       srcPts.data32F[0] = corners[0].x; srcPts.data32F[1] = corners[0].y;
       srcPts.data32F[2] = corners[1].x; srcPts.data32F[3] = corners[1].y;
       srcPts.data32F[4] = corners[2].x; srcPts.data32F[5] = corners[2].y;
       srcPts.data32F[6] = corners[3].x; srcPts.data32F[7] = corners[3].y;
 
       // 目标角点（标准矩形）
-      const dstPts = new this.cv.Mat(4, 1, this.cv.CV_32FC2);
+      const dstPts = new cv.Mat(4, 1, cv.CV_32FC2);
       dstPts.data32F[0] = 0;           dstPts.data32F[1] = 0;
       dstPts.data32F[2] = outputWidth;  dstPts.data32F[3] = 0;
       dstPts.data32F[4] = outputWidth;  dstPts.data32F[5] = outputHeight;
       dstPts.data32F[6] = 0;           dstPts.data32F[7] = outputHeight;
 
       // 透视变换矩阵
-      const M = this.cv.getPerspectiveTransform(srcPts, dstPts);
+      const M = cv.getPerspectiveTransform(srcPts, dstPts);
 
       // 应用变换
-      const dst = new this.cv.Mat();
-      this.cv.warpPerspective(
+      const dst = new cv.Mat();
+      cv.warpPerspective(
         src, dst, M,
-        new this.cv.Size(outputWidth, outputHeight),
-        this.cv.INTER_LINEAR,
-        this.cv.BORDER_CONSTANT,
-        new this.cv.Scalar()
+        new cv.Size(outputWidth, outputHeight),
+        cv.INTER_LINEAR,
+        cv.BORDER_CONSTANT,
+        new cv.Scalar()
       );
 
       // 输出 dataURL
       const canvas = document.createElement('canvas');
       canvas.width = outputWidth;
       canvas.height = outputHeight;
-      this.cv.imshow(canvas, dst);
+      cv.imshow(canvas, dst);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
       // 清理
