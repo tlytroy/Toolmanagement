@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 // @ts-ignore
-import { fabric } from "fabric";
+import * as fabric from "fabric";
 import { useStore } from "@/app/store";
 
 export function CanvasEditor() {
@@ -38,7 +38,9 @@ export function CanvasEditor() {
       setContours([fakePath]);
     });
 
-    return () => canvas.dispose();
+    return () => {
+      canvas.dispose();
+    };
   }, [imageUrl]);
 
   return <canvas ref={canvasRef} />;
