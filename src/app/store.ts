@@ -7,7 +7,8 @@ type Step =
   | "editor"
   | "params"
   | "export"
-  | "opencv-test";
+  | "opencv-test"
+  | "simple-test";
 
 interface AppState {
   step: Step;
