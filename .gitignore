@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.npmrc
+
+# Build outputs
+dist/
+build/
+out/
+
+# Logs
+*.log
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env*
+!.env.example
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS generated files
+Thumbs.db
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Typescript build info
+*.tsbuildinfo
