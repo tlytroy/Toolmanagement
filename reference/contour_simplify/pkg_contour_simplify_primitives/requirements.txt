@@ -1,0 +1,14 @@
+# 抽稀 + 基元化 依赖
+# Python 3.9+ 建议
+
+numpy>=1.24
+opencv-python>=4.8
+
+# 仅 abstract_primitive.py 全链路(带 SAM)需要；
+# abstract_from_masks.py / contour_simplify.py / batch_process.py 只需 numpy+opencv
+torch>=2.0
+segment-anything
+
+# SAM 权重(仅 abstract_primitive.py 需要):
+#   sam_vit_b_01ec64.pth
+#   https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth

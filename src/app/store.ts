@@ -1,6 +1,7 @@
 import { create } from "zustand";
+import type { Primitive } from "@/utils/types";
 
-type Step =
+export type Step =
   | "upload"
   | "calibration"
   | "segmentation"
@@ -19,8 +20,15 @@ interface AppState {
   calibratedImageUrl: string | null;
   setCalibratedImageUrl: (url: string) => void;
 
-  contours: any[]; // 后期替换为真实轮廓类型
+  contours: any[]; // OpenCV 轮廓 Mat（由 extractToolContours 返回）
   setContours: (c: any[]) => void;
+
+  /** SAM 分割掩膜（二值 Mat 或等价结构，由 SAM 推理产出；传入 extractToolContours 做 Red∪Green 并集） */
+  samMask: any | null;
+  setSamMask: (m: any | null) => void;
+
+  primitives: Primitive[]; // 基元化结果（直线/圆弧/折线）
+  setPrimitives: (p: Primitive[]) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -35,4 +43,10 @@ export const useStore = create<AppState>((set) => ({
 
   contours: [],
   setContours: (contours) => set({ contours }),
+
+  samMask: null,
+  setSamMask: (samMask) => set({ samMask }),
+
+  primitives: [],
+  setPrimitives: (primitives) => set({ primitives }),
 }));

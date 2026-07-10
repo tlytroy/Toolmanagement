@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工具管理系统测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f0f8ff;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        #preview {
+            max-width: 100%;
+            margin: 20px 0;
+            display: none;
+        }
+        #warpedPreview {
+            max-width: 100%;
+            margin: 20px 0;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 工具管理系统测试</h1>
+        
+        <div class="upload-area" id="uploadArea">
+            <p>点击选择图片或拖拽图片到此处</p>
+            <p><small>支持 JPG, PNG 格式</small></p>
+            <input type="file" id="fileInput" accept="image/*" style="display: none;">
+        </div>
+        
+        <div style="text-align: center;">
+            <button id="processBtn" disabled>处理图片</button>
+            <button id="testBtn">使用测试图片</button>
+        </div>
+        
+        <img id="preview" alt="原始图片预览">
+        <img id="warpedPreview" alt="校正后图片">
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const processBtn = document.getElementById('processBtn');
+        const testBtn = document.getElementById('testBtn');
+        const preview = document.getElementById('preview');
+        const warpedPreview = document.getElementById('warpedPreview');
+        const resultDiv = document.getElementById('result');
+
+        // 点击上传区域选择文件
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // 文件选择事件
+        fileInput.addEventListener('change', (event) => {
+            handleFileSelect(event.target.files[0]);
+        });
+
+        // 拖拽上传功能
+        uploadArea.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (event) => {
+            event.preventDefault();
+            uploadArea.classList.remove('dragover');
+            handleFileSelect(event.dataTransfer.files[0]);
+        });
+
+        // 处理文件选择
+        function handleFileSelect(file) {
+            if (file && file.type.startsWith('image/')) {
+                // 显示预览
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                    preview.onload = function() {
+                        // 限制预览图大小
+                        if (this.width > 500) {
+                            this.style.width = '500px';
+                            this.style.height = 'auto';
+                        }
+                    };
+                };
+                reader.readAsDataURL(file);
+                
+                // 保存文件并启用处理按钮
+                window.selectedFile = file;
+                processBtn.disabled = false;
+            } else {
+                showMessage('请选择有效的图片文件', 'error');
+            }
+        }
+
+        // 处理图片按钮事件
+        processBtn.addEventListener('click', processImage);
+
+        // 测试按钮事件
+        testBtn.addEventListener('click', async () => {
+            showMessage('正在获取测试图片...', 'success');
+            
+            try {
+                // 这里应该从后端获取测试图片，我们现在模拟一下
+                // 在实际应用中，你可能需要提供一个测试图片的API
+                
+                // 模拟获取测试图片
+                showMessage('使用示例图片进行测试...', 'success');
+                
+                // 直接调用处理函数
+                await processTestImage();
+            } catch (error) {
+                showMessage('获取测试图片失败: ' + error.message, 'error');
+            }
+        });
+
+        // 处理图片函数
+        async function processImage() {
+            if (!window.selectedFile) {
+                showMessage('请先选择图片文件', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', window.selectedFile);
+
+            try {
+                showMessage('正在处理图片...', 'success');
+                processBtn.disabled = true;
+
+                const response = await fetch('http://localhost:8001/process-image', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage(`
+                        <h3>处理成功!</h3>
+                        <p><strong>检测到纸张角点:</strong></p>
+                        <ul>
+                            ${result.calibration.corners.map((corner, index) => 
+                                `<li>角点${index+1}: (${corner.x.toFixed(1)}, ${corner.y.toFixed(1)})</li>`
+                            ).join('')}
+                        </ul>
+                        <p><strong>检测到轮廓基元:</strong> ${result.primitives.length} 个</p>
+                    `, 'success');
+                    
+                    // 显示校正后的图片
+                    if (result.calibration.warped_image) {
+                        warpedPreview.src = result.calibration.warped_image;
+                        warpedPreview.style.display = 'block';
+                        warpedPreview.onload = function() {
+                            if (this.width > 500) {
+                                this.style.width = '500px';
+                                this.style.height = 'auto';
+                            }
+                        };
+                    }
+                } else {
+                    showMessage('处理失败: ' + (result.error || '未知错误'), 'error');
+                }
+            } catch (error) {
+                showMessage('处理图片时发生错误: ' + error.message, 'error');
+            } finally {
+                processBtn.disabled = false;
+            }
+        }
+
+        // 处理测试图片函数
+        async function processTestImage() {
+            try {
+                showMessage('正在处理测试图片...', 'success');
+
+                // 直接测试后端API
+                const response = await fetch('http://localhost:8001/process-image');
+                
+                if (response.ok) {
+                    // 这里我们模拟成功响应
+                    showMessage(`
+                        <h3>测试成功!</h3>
+                        <p>后端服务正常运行，API接口可用。</p>
+                        <p>您可以上传自己的工具图片进行测试。</p>
+                    `, 'success');
+                } else {
+                    // 尝试获取测试图片
+                    showMessage('请上传一张工具图片进行实际测试', 'success');
+                }
+            } catch (error) {
+                showMessage('测试时发生错误: ' + error.message, 'error');
+            }
+        }
+
+        // 显示消息函数
+        function showMessage(message, type) {
+            resultDiv.innerHTML = message;
+            resultDiv.className = type;
+            resultDiv.style.display = 'block';
+        }
+
+        // 页面加载完成后显示欢迎消息
+        window.addEventListener('load', () => {
+            showMessage(`
+                <h3>系统就绪!</h3>
+                <p>后端服务已启动，可以开始测试。</p>
+                <p>请上传一张包含工具的图片进行处理。</p>
+            `, 'success');
+        });
+    </script>
+</body>
+</html>

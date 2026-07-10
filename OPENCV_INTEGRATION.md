@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-OpenCV.js 已通过 `<script>` 标签集成（`public/opencv.js` 挂载到 `window.cv`），并实现了完整的纸张检测功能。纸张检测已全部集中在 `src/lib/opencvUtils.ts#detectPaperCorners`（全自动、无参数），功能完全集成到主应用的校准页面中：导入图片即自动识别，无需手动调参。
+OpenCV.js 已通过 `<script>` 标签集成（`public/opencv.js` 挂载到 `window.cv`），并实现了完整的纸张检测与工具轮廓基元化功能。纸张检测已全部集中在 `src/lib/opencvUtils.ts#detectPaperCorners`（全自动、无参数）；工具轮廓基元化集中在同文件的 `abstractFromMask` / `extractPrimitives`（union(Fast∪SAM接口) + 形态学 + Chaikin 平滑 + 曲率分段 line/arc 拟合）。功能完全集成到主应用的校准页面中：导入图片即自动识别纸张，提取轮廓后自动叠加直线/圆弧/折线基元。
 
 ## 核心功能实现
 
@@ -52,6 +52,185 @@ OpenCV.js 已通过 `<script>` 标签集成（`public/opencv.js` 挂载到 `wind
 - 具体的失败原因诊断和用户提示
 - 内存管理和资源释放
 
+### 3. 工具轮廓提取与基元化（DP 逐段法，2026-07-09 对齐）
+
+> 并集算法对齐 `sam_union_final.py`；基元化对齐 `contour_simplify.py` / `batch_process.py`（DP 抽稀 + 逐段 line/arc 拟合）。用代数最小二乘圆拟合替代 `cv2.minEnclosingCircle`，避免 <180° 弧半径塌缩。纯 JS 端到端回归已 1:1 验证（4 张真实工具图与 Python 一致）。
+
+**管线：**
+- `extractFastMask(cv, src)`（对齐 `repro_contour_v9.extract_tool_contour_v9`）：四策略并集(LAB暗区+BlackHat+Canny桥接+方案A) → 开运算(3)去噪 → 梯度阴影剥离 → 孔洞填充 → 最大连通块填充 + dilate(7)。返回 Fast 掩膜（**已用 opencv.js 像素级回归验证 IoU=1.0000**）。**它取代了原先的 OTSU 玩具**——那正是"fast sam union 啥都没实现"的根因。
+- `prepareSamMask(cv, rawMasks, fastMask)`（对齐 `sam_union_final.py` 的 `is_shadow_mask_simple`+过滤+合并）：逐候选做 面积≥100 / 与 Fast 重叠≥50% / 几何拒阴影 过滤，保留的按位累积。**返回的是累积并集（未做形态学）**，形态学交给下游 `segmentDetail`。
+- `segmentDetail(cv, samMask, fastMask)`：`Red(SAM=prepareSamMask输出) → close(9) 桥接 → dilate(7) → ∪ Green(Fast) → erode(3 椭圆) → merged_contour(全量重绘+close9桥接+取最大) → Chaikin 平滑 2 次`。
+- `abstractFromMask(cv, fastMask, samMask?, options?)` → `extractPrimitives`：DP 抽稀(ε=0.004·周长) → 相邻拐点稠密点段上逐段 line/arc 拟合。
+
+- `extractToolContours(cv, imageUrl, minArea, samMask?)`：内部 `imread(RGBA)` → `extractFastMask`（内部 RGBA2BGR）得到 Fast 掩膜 → `abstractFromMask(fastMask, samMask)`。把 **`prepareSamMask` 处理过的 `samMask` Mat** 传进去即自动做 `Fast ∪ SAM` 融合（store 透传的即此 Mat）。
+- ⚠️ 当前第 4 参是 `samMask`（Mat）；但 `prepareSamMask` 需要 `fastMask`，而 `fastMask` 在 `extractToolContours` 内部才算 → 推荐按 **§3 接法 A** 把 `SamInference` 实例传进来，由内部统一算 `fastMask` 再 union，避免重复计算与过滤失效。
+- `samMask` 的 raw 来源是 **`src/lib/samInference.ts`（SAM ONNX 推理）**：`SamInference.create({modelUrl}).generate(cv, src)` 返回 `RawSamMask[]`，再经 `prepareSamMask` 过滤合并成 merged Mat。
+- `findContours(RETR_EXTERNAL, CHAIN_APPROX_NONE)` 取面积最大轮廓后，`extractPrimitives` 内部为纯 JS 计算（主 DP 用 `cv.approxPolyDP`）。
+
+**基元化步骤（对齐 `contour_simplify.py`，`dpEpsilon=0.004`、`linTol=4`、`arcTol=4`、`maxArcRadius=55`）：**
+1. `cv.approxPolyDP(ε=0.004·arcLength)` 取拐点；相邻拐点间取原始稠密点段；
+2. 每段：`err_l`=直线 RMS（等价 `cv2.fitLine`，以 `pts[0]` 为参考点），`err_c`=圆拟合 RMS（中心化 Kasa 代数最小二乘，等价 `np.linalg.lstsq`）；
+3. `is_arc = err_c<err_l 且 err_c<4 且 err_l>4`；半径≤55 → `arc`（重采样点列，避 0/360 穿越），半径>55 → 退化为 `polyline`，否则 → `line`。
+
+**类型（`src/utils/types.ts`）：** `Primitive = line | arc | polyline`；`AbstractOptions = { dpEpsilon?, linTol?, arcTol?, maxArcRadius? }`。`drawPrimitives` 配色：绿=直线、橙=圆弧、紫=折线。
+
+## SAM 浏览器内 ONNX 推理（2026-07-09 新增，2026-07-09 深夜降级为备选）
+
+> ⚠️ **架构修订（2026-07-09 深夜）**：本节原目标"Fast+SAM+union 全在浏览器本地、不再依赖 Python"**已被撤回**。新主路径为「Tauri/Electron 桌面应用 + Python 后端」（详见 `DEVELOPMENT_GUIDE.md` §六）：SAM 由 Python 后端跑，前端只做 union+基元化。本节的浏览器 ONNX 推理路径**降级为纯前端备选**——仅当"绝对不要后端、只做轻量网页预览"时才用。前端 `opencvUtils.ts` 的 `prepareSamMask`/`segmentDetail` 仍作为"Python 后端算好 SAM 掩膜 → 前端 union"的契约层，不废。
+
+### 1. 安装依赖
+
+`onnxruntime-web` 已在 `package.json` 声明，装好即可：
+
+```bash
+npm install        # 已含 onnxruntime-web ^1.27.0
+```
+
+### 2. 准备 ONNX 模型（纯前端备选路径，主路径请用 Python 后端）
+
+> 仅当走"纯浏览器、无后端"备选时执行本节。若采用 Tauri/Electron + Python 后端方案，SAM 由后端跑，跳过本节。
+模型文件只需一次性准备好，二选一：
+
+**方案 A（推荐，零 Python）**：直接下载社区已导出的 SAM ViT-B「合并 ONNX」（单 session）。
+- 搜索 `sam_vit_b.onnx` 合并模型（HuggingFace / 模型社区均可），确认输入含
+  `image` / `point_coords` / `point_labels` / `mask_input` / `has_mask_input`，
+  输出含 `masks` / `iou_predictions`。
+- 放到 `public/models/sam_vit_b.onnx` 即可。
+
+**方案 B（自己导出）**：在能跑 torch 的机器上用脚本导出（需 `torch` + `segment_anything`）：
+
+```bash
+cd toolmanagement-web
+python scripts/convert_sam_onnx.py \
+    --checkpoint /path/to/sam_vit_b_01ec64.pth \
+    --model-type vit_b \
+    --output public/models/sam_vit_b.onnx
+```
+
+导出的是「合并 ONNX」单 session（官方 `export_onnx_model.py` 格式）：输入 `image[1,3,1024,1024]|point_coords|point_labels|mask_input|has_mask_input`，输出 `masks[1,3,256,256]|iou_predictions|low_res_masks`。`samInference.ts` 用 16×16 网格点逐点喂，复刻 `SamAutomaticMaskGenerator`。
+
+> 验证模型格式：用 netron 打开，确认张量名与上面一致；若命名不同，`samInference.ts` 的 `findName()` 会容错匹配含子串的名字。
+
+### 3. 接线（React 侧）—— 先解决 "prepareSamMask 需要 fastMask" 的依赖
+
+**依赖关系（踩坑点）：**
+- `segmentDetail` 真正要的是 **已 `prepareSamMask` 处理过的 SAM merged Mat**（不是 rawMasks）。
+- `prepareSamMask(cv, rawMasks, fastMask)` 内部要用 `fastMask` 计算「与 Fast 重叠率 ≥50%」来过滤 SAM 候选。
+- 而 `fastMask` 是在 `extractToolContours` 内部由 `extractFastMask` 算的。
+
+→ 所以 **SAM 推理 + prepareSamMask 必须能拿到同一个 `fastMask`**，否则过滤失效（SAM 候选全被误杀，union 等于没接）。两种接法：
+
+#### 接法 A（推荐）：把 `SamInference` 实例直接传进 `extractToolContours`
+
+改 `extractToolContours` 第 4 参：从"已处理好的 samMask Mat"改成"可选的 sam 实例"，内部完成 union：
+
+```ts
+// opencvUtils.ts
+import { SamInference } from "./samInference";
+
+export const extractToolContours = async (
+  cv: OpenCV,
+  imageUrl: string,
+  minArea: number,
+  sam?: SamInference,            // ← 改这里：传实例而非 Mat
+) => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c: any = cv;
+      const src = c.imread(img);
+      const fastMask = extractFastMask(cv, src);       // 内部先算 Fast
+      let samMaskMat: any = null;
+      if (sam) {
+        const rawMasks = await sam.generate(cv, src);  // 浏览器 ONNX 推理
+        samMaskMat = prepareSamMask(cv, rawMasks, fastMask);  // 用同一 fastMask 过滤
+      }
+      // 后续 findContours / drawContours / abstractFromMask(fastMask, samMaskMat) 不变
+      const abstracted = abstractFromMask(cv, fastMask, samMaskMat);
+      // ... 组装 resolve({ debugUrl, primitives, primitiveDebugUrl }) 后别忘了 fastMask.delete()
+    };
+    img.src = imageUrl;
+  });
+};
+```
+
+页面侧只需初始化时建一次 `sam`，点"提取工具轮廓"传进去：
+
+```ts
+// CalibrationPage.tsx
+import { SamInference } from "@/lib/samInference";
+const samRef = useRef<SamInference | null>(null);
+
+useEffect(() => {
+  if (cv && !samRef.current) {
+    SamInference.create({ modelUrl: "/models/sam_vit_b.onnx", backend: "webgl" })
+      .then((s) => (samRef.current = s))
+      .catch((e) => console.error("[SAM] 加载失败:", e));
+  }
+}, [cv]);
+
+const handleExtract = useCallback(async () => {
+  if (!cv || !warpedUrl) return;
+  try {                                    // ← 务必 try/catch，否则异常被静默吞掉
+    const result = await extractToolContours(cv, warpedUrl, 300, samRef.current ?? undefined);
+    setDebugUrl(result.debugUrl);
+    setPrimitives(result.primitives ?? []);
+    setPrimitiveDebugUrl(result.primitiveDebugUrl);
+  } catch (e) {
+    console.error("[handleExtract] 失败:", e);
+  }
+}, [cv, warpedUrl]);
+```
+
+> 接法 A 下 union 自动生效：Fast 漏掉的暗区（如尖嘴钳刀刃缺口）会被 SAM 的 Red 掩膜补上。
+
+#### 接法 B（不改 extractToolContours 签名）：页面分步算 samMask 存 store
+
+若不想动 `opencvUtils.ts`，页面在"生成 SAM"按钮里算好 samMask 存 store，再透传给 `extractToolContours`：
+
+```ts
+const handleGenerateSam = useCallback(async () => {
+  if (!cv || !warpedUrl || !samRef.current) return;
+  const img = new Image(); img.src = warpedUrl;
+  await new Promise((r) => (img.onload = r));
+  const c: any = cv;
+  const src = c.imread(img);
+  const fastMask = extractFastMask(cv, src);
+  const rawMasks = await samRef.current.generate(cv, src);
+  const samMaskMat = prepareSamMask(cv, rawMasks, fastMask);  // 累积并集 Mat
+  src.delete(); fastMask.delete();
+  setSamMask(samMaskMat);   // store 字段 samMask: any | null
+}, [cv, warpedUrl]);
+
+// 之后点"提取工具轮廓"仍走原签名：extractToolContours(cv, warpedUrl, 300, samMask)
+// ⚠️ 代价：fastMask 会算两次（handleGenerateSam 一次 + extractToolContours 内部一次），重复但正确
+```
+
+> 接法 B 的 `samMask` 必须是 **`prepareSamMask` 返回的 merged Mat**（不是 rawMasks）。
+
+### 4. 已知坑 / 可调项
+
+- **`SAM_SIGMOID_OUTPUT`**：官方导出输出的是 logits，本模块默认 `true`（sigmoid 后按 0.5 二值化）。若你的导出已含 sigmoid，置 `false`，否则 mask 全黑/全白。
+- **推理后端**：默认 `webgl`；低端机/无 WebGL 时设 `backend: "wasm"`。
+- **本地托管 onnxruntime-web wasm**：`npm install` 后把 `node_modules/onnxruntime-web/dist/*.wasm` 复制到 `public/ort-wasm/`，并在 `SamInference.create` 前设 `ort.env.wasm.wasmPaths = "/ort-wasm/"`（或动态 import 后设），否则依赖 CDN 联网首次加载。
+- **`handleExtract` 必须 try/catch**：否则浏览器任何一步抛异常会被 Promise 静默 reject，表现为"按钮按了没反应"（本次排查踩过的坑）。
+- **性能**：16×16=256 次解码器前向，ViT-B 在浏览器约数秒~十几秒/张，适合"点一下生成"而非实时。
+- **`prepareSamMask` 过滤参数**（在 opencvUtils.ts）：`SAM_AREA_MIN=100`、`SAM_OVERLAP_MIN=0.5`。若 union 后仍见缺口，可能该 SAM 候选被重叠率阈值误杀 → 临时调到 `0.3` 验证。
+
+### 5. 浏览器端验证 union 生效（对照本次目标）
+
+目标：Fast 掩膜（红）在**尖嘴钳刀刃上方有缺口**，接 SAM 后该缺口应被补上。
+
+1. **不传 SAM**：`extractToolContours(cv, warpedUrl, 300)` —— 基元化结果钳口上方应有空洞。
+2. **接上 SAM** 重跑：`union(Red(SAM) ∪ Green(Fast))` 后空洞应被补满，轮廓闭合。
+3. **临时可视化**：在 `extractToolContours` 的 `debugImg` 上多画一层 SAM 掩膜（青色 `Scalar(255,255,0)`），确认 SAM 真的覆盖缺口区域。
+4. **缺口没补上？** 按 F12 看 console 报错；或检查 `prepareSamMask` 是否把该候选过滤了（`SAM_OVERLAP_MIN` / `isShadowMaskSimple` 误杀 → 调参或临时打 log 看 `kept` 计数）。
+
+## 新增文件说明（偏离单文件铁律，需知会）
+
+- **`src/lib/samInference.ts`**：SAM ONNX 推理（模型运行时胶水），非轮廓算法，故独立于 `opencvUtils.ts`。若团队坚持绝对单文件，可把 `SamInference` 类搬进 `opencvUtils.ts` 并 `import("onnxruntime-web")` 动态加载。
+- **`scripts/convert_sam_onnx.py`**：本地导出脚本，不属于前端运行时。
+
 ## 测试方法
 
 1. `npm run dev` 启动，访问 http://localhost:5173
@@ -70,6 +249,7 @@ OpenCV.js 功能已完全集成到校准页面中：
 - **横竖屏自适应**（检测方向跟随照片方向，输出保持 A4 比例）
 - 透视校正处理
 - 尺寸标定计算
+- **工具轮廓基元化**（segmentDetail 并集(Fast∪SAM接口，对齐 sam_union_final.py) + Chaikin 平滑 + DP 逐段 line/arc 拟合，绿=直线/橙=圆弧/紫=折线叠加显示）
 - 用户友好的界面和错误提示（"识别中…" / 失败原因文字）
 - 失败原因诊断和改进建议
 

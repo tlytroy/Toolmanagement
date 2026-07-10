@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工具管理修复结果展示</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .results {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 30px;
+            margin-top: 30px;
+        }
+        .result-item {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .result-item h2 {
+            color: #555;
+            margin-bottom: 15px;
+        }
+        .image-container {
+            text-align: center;
+        }
+        .image-container img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .info {
+            margin-top: 10px;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>工具管理修复结果展示</h1>
+        
+        <div class="results">
+            <div class="result-item">
+                <h2>1. 纸张角点检测结果</h2>
+                <div class="image-container">
+                    <img src="test_results/paper_detection/corners_detected.jpg" alt="纸张角点检测结果">
+                </div>
+                <div class="info">
+                    <p>• 成功检测到A4纸的四个角点</p>
+                    <p>• 在原图上标记了检测到的角点位置</p>
+                </div>
+            </div>
+            
+            <div class="result-item">
+                <h2>2. 透视校正结果</h2>
+                <div class="image-container">
+                    <img src="test_results/paper_detection/warped_result.jpg" alt="透视校正结果">
+                </div>
+                <div class="info">
+                    <p>• 使用固定A4尺寸(840x1188像素)进行透视校正</p>
+                    <p>• 完美解决图像被压扁的问题</p>
+                    <p>• 宽高比符合A4标准(1:1.414)</p>
+                </div>
+            </div>
+            
+            <div class="result-item">
+                <h2>3. 工具轮廓提取结果</h2>
+                <div class="image-container">
+                    <img src="test_results/tool_contours/tool_contour_result.jpg" alt="工具轮廓提取结果">
+                </div>
+                <div class="info">
+                    <p>• 在校正后的图像上成功提取工具轮廓</p>
+                    <p>• 使用v26版本的"只填不啃"算法</p>
+                    <p>• 检测到1个折线基元</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

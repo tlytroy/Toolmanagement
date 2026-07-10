@@ -1,0 +1,4 @@
+numpy>=1.24
+opencv-python>=4.7
+# 若在无显示环境（纯服务器/WSL headless）安装失败，可改用：
+# opencv-python-headless>=4.7

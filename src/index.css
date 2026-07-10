@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+/* 应用整体背景：极淡的斜向渐变，让白色卡片浮起来 */
+.bg-app {
+  background:
+    radial-gradient(1200px 600px at 100% -10%, rgba(37, 99, 235, 0.06), transparent 60%),
+    radial-gradient(1000px 500px at -10% 110%, rgba(99, 102, 241, 0.05), transparent 55%),
+    #f8fafc;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* 图片在容器内居中且保持比例 */
+.img-contain {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+/* ===== 深色画布 / 玻璃面板（Figma / Tooltrace 风） ===== */
+
+/* 深色 viewport 的细点阵网格，让黑色不再死板 */
+.canvas-grid {
+  background-color: #0a0a0b;
+  background-image:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: -11px -11px;
+}
+
+/* 玻璃态浮层面板（右侧参数面板 / viewport 内悬浮工具条） */
+.glass-panel {
+  background: rgba(17, 17, 19, 0.72);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(82, 82, 94, 0.45);
+  box-shadow:
+    0 12px 40px -12px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+.glass-bar {
+  background: rgba(17, 17, 19, 0.6);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(82, 82, 94, 0.35);
+}
+
+/* 深色画布区内的细滚动条 */
+.canvas-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.canvas-scroll::-webkit-scrollbar-thumb {
+  background: #3a3a42;
+  border-radius: 6px;
+  border: 2px solid #0a0a0b;
+}
+.canvas-scroll::-webkit-scrollbar-thumb:hover {
+  background: #4b4b55;
+}

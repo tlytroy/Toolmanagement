@@ -2,17 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>工具轮廓扫描 & 3D 收纳生成器</title>
+    <title>工具嵌件生成器</title>
   </head>
   <body>
     <div id="root"></div>
-    <!-- 经典脚本：UMD 会把 OpenCV 挂到 window.cv（是一个 Promise）。
-         必须放在 module 脚本之前，classic script 同步执行，
-         module 脚本 defer 后执行，保证 React 启动时 window.cv 已就绪。
-         注意：不要通过 import() 加载 @techstark/opencv-js，
-         Vite dev 会因 13MB CJS 文件卡死。 -->
-    <script src="/opencv.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

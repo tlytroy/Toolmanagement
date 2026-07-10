@@ -21,7 +21,7 @@ Toolmanagement-web 是一个基于浏览器的工具轮廓扫描和 3D 收纳生
    - 多格式导出
 
 2. **核心技术集成**
-   - OpenCV.js：纸张检测与透视校正
+   - OpenCV.js：纸张检测与透视校正、工具轮廓基元化（直线/圆弧/折线提取）
    - SAM (Segment Anything)：AI 工具轮廓提取
    - Clipper.js：轮廓偏移与布尔运算
    - Three.js + OpenCASCADE：3D 建模与渲染
@@ -113,10 +113,11 @@ public/
 - **纸张检测功能完善**：多策略检测、调试信息、失败诊断 ✅
 - **校准页面实现**：导入照片即自动识别 A4 纸四角、透视校正、尺寸标定 ✅
 - **SAM 分割模拟**：实现基于假数据的分割页面与流程验证 ✅
+- **工具轮廓基元化（曲率分段法）**：union(Fast∪SAM 接口) + 形态学 + Chaikin 平滑 + 曲率分段 line/arc 拟合（代数最小二乘圆拟合替代 minEnclosingCircle，避免 <180° 弧半径塌缩）；纯 JS 回归验证 10/10 通过 ✅
 
 ### 近期计划 🚀
 
-1. **SAM 模型集成**：集成真实的 SAM ONNX 模型，实现 AI 工具轮廓提取
+1. **SAM 模型集成**：集成真实的 SAM ONNX 模型，实现 AI 工具轮廓提取（`abstractFromMask` 已预留 `samMask` 并集接口，当前走 Fast-only 路径）
 2. **Clipper.js 轮廓偏移**：实现真实的轮廓偏移与布尔运算功能
 3. **3D 建模与导出**：集成 OpenCASCADE 实现真实的 3D 模型生成
 4. **Web Worker 优化**：将重计算任务（OpenCV、SAM、3D 建模）迁移到 Web Worker
@@ -211,3 +212,92 @@ public/
 - [OpenCASCADE](https://www.opencascade.com/)
 - [Fabric.js](http://fabricjs.com/)
 - [Three.js](https://threejs.org/)
+
+## UI 现代化更新日志
+
+> ⚠️ **形态变更**：本站已于 2026-07-09 从「6 步向导（Stepper）」二次重构为 **Figma / Tooltrace 式单屏 workspace**（深色画布 + 浅色顶栏/侧栏 + 右侧浮动玻璃参数面板）。下文「设计系统重构·本次」及之后条目以 workspace 为准；更早的「全局设计系统升级 / Stepper 卡片式」等条目为向导形态历史，已被取代。
+
+### 2026-07-09
+
+#### 主要更新内容：
+
+1. **全局设计系统升级**
+   - 采用现代化渐变背景（从蓝色到靛蓝色的渐变）
+   - 统一使用圆角设计（2xl 圆角）
+   - 优化阴影层次，增强视觉深度
+   - 全面响应式设计，适配各种屏幕尺寸
+
+2. **Stepper 组件重设计**
+   - 改为卡片式进度指示器，包含图标和状态
+   - 实现步骤完成状态可视化（✅ 标记）
+   - 添加平滑过渡动画
+   - 禁用未完成步骤的点击
+   - 优化移动端显示效果
+
+3. **上传页面现代化**
+   - 支持拖拽上传功能
+   - 优化文件选择按钮样式
+   - 重新设计拍摄指南，使用图标和卡片布局
+   - 添加悬停效果和动画反馈
+
+4. **校准页面 UI 升级**
+   - 重新设计加载状态，添加进度条动画
+   - 优化结果展示区域，使用彩色状态卡片
+   - 重新布局操作按钮，使用图标和变体样式
+   - 优化错误提示和警告信息的展示
+   - 统一卡片式布局，增强视觉层次
+
+5. **AI 分割页面重设计**
+   - 优化图像展示区域，添加阴影和圆角
+   - 重新设计进度条和处理状态
+   - 美化选项面板，使用卡片和图标
+   - 统一按钮样式和交互体验
+
+6. **按钮组件系统升级**
+   - 添加多种变体（primary, secondary, success, danger, outline）
+   - 支持三种尺寸（sm, md, lg）
+   - 优化悬停效果和阴影
+   - 统一图标使用规范
+
+#### 设计原则：
+
+- **视觉层次清晰**：通过卡片、阴影、颜色区分不同层级
+- **交互反馈明确**：所有操作都有即时视觉反馈
+- **现代化美学**：采用当前流行的设计趋势，如渐变、圆角、卡片式布局
+- **响应式适配**：确保在各种设备上都有良好的显示效果
+- **无障碍设计**：合理的颜色对比度和状态提示
+
+### 2026-07-09（设计系统重构 · 本次）
+
+> 此前页面虽接了 Tailwind，但设计语言不统一（有的用 `brand`、有的用裸 `blue-*`、灰卡 `bg-gray-100`、emoji 堆砌）；未实现的分割/编辑/导出页还是早期 demo 风（裸 `<input>`、假矩形假坐标）。本次重做统一设计系统。
+
+#### 设计令牌（tailwind.config.js）
+- `brand` 蓝/靛色板（50–900）为全站唯一主色，**禁止再裸写 `blue-*`**。
+- `shadow-card` / `shadow-card-hover` 柔和阴影；`rounded-2xl/3xl`；`animate-fade-in` 入场动画。
+- `src/index.css` 新增 `.bg-app` 极淡斜向渐变背景（浅色 chrome 区用）；新增 `.canvas-grid`（深色画布点阵）、`.glass-panel`/`.glass-bar`（玻璃态浮层）、`.canvas-scroll`（深色细滚动条）。
+- `tailwind.config.js` 的 `theme.extend.colors` 新增 `canvas`（950/900/850/800/700/600）作为深色画布与面板基调；`animate-slide-in-right`/`slide-down` 面板入场动画。
+
+#### 共享组件库（src/components/ui/，零新依赖）
+- `icons.tsx`：自绘 SVG 图标集（lucide 风格、`currentColor`），**当前不引入图标库**，避免你那边多装包。
+  - 计划图标库为 **lucide-react**（用户指定栈：Shadcn/ui + Tailwind + Lucide）。本沙箱 WSL 文件系统 npm 安装存在 `ENOTEMPTY` 重命名冲突，无法在此装；你 WSL 内 `npm i lucide-react` 后，把 `icons.tsx` 的各处 `<Icon name=... />` 换为 lucide 组件即可，视觉等价。
+- `Card`：统一卡片（可选标题/图标/副标题/操作区）。
+- `Badge`：状态徽章（default/brand/success/warning/danger/info）。
+- `Button`：统一按钮（primary/secondary/success/danger/outline/ghost + sm/md/lg），主色改 `brand`。
+- `SectionHeading`：页头（eyebrow + 标题 + 描述）。
+- `EmptyState`：空 / 规划中占位。
+
+#### 应用外壳（单屏 workspace，取代 6 步向导）
+- `pages/Home.tsx`：仅渲染 `<Workspace />`。
+- `src/features/workspace/Workspace.tsx`（**唯一外壳**，新增）：浅色顶栏（Linear 风）+ 左侧工具栏（浅色、可收起 `w-16`↔`w-56`）+ 中央深色画布 viewport（`bg-canvas-950` + `.canvas-grid`）+ 右侧浮动玻璃参数面板（`glass-panel`，绝对定位浮于画布右上，不挤占画布）。`store.step` 驱动左侧激活态与右侧面板内容。
+- 已删除 `components/Stepper.tsx`、`features/upload/UploadPage.tsx`、`features/calibration/CalibrationPage.tsx` 及分割/编辑/参数/导出页（逻辑并入 Workspace，未实现功能改为右侧「规划中」卡片）。
+
+#### 页面状态（workspace 内）
+- **已实现并打磨**：上传（画布内拖拽/点击）→ 自动识别纸张 → 透视校正 → 提取轮廓 → 基元化，全部在 `Workspace` 内完成，`opencvUtils` 调用逻辑零改动。
+- **未实现 → 右侧面板「规划中」卡片**（避免假 demo 误导）：`AI 轮廓精修`（SAM 语义分割补全遮挡）、`矢量轮廓编辑器`、`参数配置`（底板/腔体厚度与偏移）、`导出`（STL/SVG/PDF/Gridfinity）。
+- **3D 预览区**：中央画布左下角玻璃占位「3D 预览区·后端几何待接入」，待 §七 后端引擎接入后替换为真实 Three.js viewport。
+
+#### 验证
+- `tsc --noEmit` 退出码 0（strict + noUnusedLocals/Parameters）。
+- `vite build` 通过（CSS 19KB = Tailwind 正常编译）。
+- 顺带修复两处原有编译阻塞：`src/vite-env.d.ts` 缺失（CSS 导入报错）、`src/lib/samInference.ts` 错把 `RawSamMask` 写成 `@/utils/opencvUtils`（应为 `@/lib/opencvUtils`）。
+- 注：本环境 `tailwindcss`/`autoprefixer` 此前未真正装进 node_modules，已补装，`npm run dev` 可直接起。

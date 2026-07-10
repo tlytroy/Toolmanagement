@@ -1,0 +1,14 @@
+# 工具轮廓识别 (Fast + SAM + 并集) 依赖
+# Python 3.9+ 建议
+
+numpy>=1.24
+opencv-python>=4.8
+
+# SAM (sam_union_final.py 需要，repro_contour_v9.py 不需要)
+torch>=2.0
+# segment-anything 官方库：pip install git+https://github.com/facebookresearch/segment-anything.git
+segment-anything
+
+# 模型权重 (手动下载，放到脚本 OUT 目录):
+#   sam_vit_b_01ec64.pth
+#   https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
