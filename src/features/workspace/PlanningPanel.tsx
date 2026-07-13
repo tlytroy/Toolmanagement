@@ -47,8 +47,11 @@ interface PlanningPanelProps {
   onMaskUpdate?: (updatedMask: string) => void;
   simplifiedPrimitives: Primitive[];
   setSimplifiedPrimitives: (primitives: Primitive[]) => void;
-  originalContour?: string; // 原始轮廓图像（红色边框）
   warpedUrl?: string; // 校正后的图像（用于背景叠加）
+  detectionFailed?: boolean;
+  onManualDraw?: () => void;
+  onReupload?: () => void;
+  onUpdateContour?: (primitives: Primitive[]) => void;
 }
 
 export function PlanningPanel({
@@ -71,8 +74,11 @@ export function PlanningPanel({
   onMaskUpdate,
   simplifiedPrimitives,
   setSimplifiedPrimitives,
-  originalContour,
-  warpedUrl
+  warpedUrl,
+  detectionFailed,
+  onManualDraw,
+  onReupload,
+  onUpdateContour
 }: PlanningPanelProps) {
   if (step === "upload") {
     return <UploadPanel onUpload={onUpload} />;
@@ -101,6 +107,9 @@ export function PlanningPanel({
         primitives={primitives}
         primitiveDebugUrl={primitiveDebugUrl}
         processContourExtraction={processContourExtraction}
+        detectionFailed={detectionFailed}
+        onManualDraw={onManualDraw}
+        onReupload={onReupload}
       />
     );
   }
@@ -112,8 +121,8 @@ export function PlanningPanel({
         onMaskUpdate={onMaskUpdate}
         simplifiedPrimitives={simplifiedPrimitives}
         setSimplifiedPrimitives={setSimplifiedPrimitives}
-        originalContour={originalContour}
         backgroundImage={warpedUrl}
+        onUpdateContour={onUpdateContour ?? (() => {})}
       />
     );
   }

@@ -64,39 +64,93 @@ export function Viewport({
   step,
   primitives,
 }: ViewportProps) {
-  // 当primitives变化时，更新Canvas显示
+  // 当 primitives 变化时，在左侧轮廓预览画布上绘制红色轮廓线
   useEffect(() => {
-    if (step === "editor" && primitives && primitives.length > 0) {
-      const canvas = document.getElementById('editor-preview-canvas') as HTMLCanvasElement;
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          // 清空画布
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (step !== "editor" || !primitives || primitives.length === 0) return;
 
-          // 设置线条样式
-          ctx.strokeStyle = '#00ff00'; // 绿色轮廓线
-          ctx.lineWidth = 2;
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
+    const canvas = document.getElementById('editor-contour-canvas') as HTMLCanvasElement;
+    const warpImg = document.getElementById('editor-warp-img') as HTMLImageElement;
+    if (!canvas || !warpImg) return;
 
-          // 绘制每个基元
-          primitives.forEach(primitive => {
-            if (primitive.type === 'line') {
-              ctx.beginPath();
-              ctx.moveTo(primitive.start.x, primitive.start.y);
-              ctx.lineTo(primitive.end.x, primitive.end.y);
-              ctx.stroke();
-            } else if (primitive.type === 'arc') {
-              ctx.beginPath();
-              ctx.arc(primitive.center.x, primitive.center.y, primitive.radius, 0, 2 * Math.PI);
-              ctx.stroke();
-            }
-          });
-        }
+    // 等 warp 图完全加载后匹配尺寸
+    const setupAndDraw = () => {
+      if (!warpImg.naturalWidth) {
+        // 图片还没加载完，延迟重试
+        setTimeout(setupAndDraw, 50);
+        return;
       }
-    }
-  }, [primitives, step]);
+      canvas.width = warpImg.naturalWidth;
+      canvas.height = warpImg.naturalHeight;
+      canvas.style.width = warpImg.clientWidth + 'px';
+      canvas.style.height = warpImg.clientHeight + 'px';
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 红色轮廓线
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = 'rgba(239, 68, 68, 0.5)';
+      ctx.shadowBlur = 3;
+
+      // Helper: backend may return [x, y] arrays instead of {x, y} objects
+      const toPt = (v: any) =>
+        Array.isArray(v) ? { x: v[0], y: v[1] } : v;
+
+      primitives.forEach((primitive: any) => {
+        if (primitive.type === 'line') {
+          const p0 = toPt(primitive.p0);
+          const p1 = toPt(primitive.p1);
+          if (p0 && p1) {
+            ctx.beginPath();
+            ctx.moveTo(p0.x, p0.y);
+            ctx.lineTo(p1.x, p1.y);
+            ctx.stroke();
+          }
+        } else if (primitive.type === 'arc') {
+          const c = toPt(primitive.center);
+          if (c && primitive.radius && primitive.seg_pts && primitive.seg_pts.length > 0) {
+            const seg = primitive.seg_pts;
+            // 计算 seg_pts 中每个点相对于中心的角度
+            const angles = seg.map((pt: any) => {
+              const x = typeof pt.x === 'number' ? pt.x : pt[0];
+              const y = typeof pt.y === 'number' ? pt.y : pt[1];
+              return Math.atan2(y - c.y, x - c.x);
+            });
+            // unwrap 角度消除 2π 跳变
+            for (let i = 1; i < angles.length; i++) {
+              while (angles[i] - angles[i - 1] > Math.PI) angles[i] -= 2 * Math.PI;
+              while (angles[i] - angles[i - 1] < -Math.PI) angles[i] += 2 * Math.PI;
+            }
+            const a0 = angles[0];
+            const a1 = angles[angles.length - 1];
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, primitive.radius, a0, a1, a1 > a0);
+            ctx.stroke();
+          }
+        } else if (primitive.type === 'polyline' && primitive.points) {
+          const pts = primitive.points.map(toPt);
+          if (pts.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) {
+              ctx.lineTo(pts[i].x, pts[i].y);
+            }
+            ctx.stroke();
+          }
+        }
+      });
+
+      // Reset shadow
+      ctx.shadowBlur = 0;
+    };
+
+    // Delay to let the canvas render in DOM
+    requestAnimationFrame(setupAndDraw);
+  }, [primitives, step, warpedUrl]);
   return (
     <main
       className={`relative flex-1 min-w-0 canvas-scroll overflow-auto ${
@@ -124,27 +178,31 @@ export function Viewport({
           />
         </label>
       ) : step === "editor" ? (
-        // 编辑器模式：显示实时预览（大图）
+        // 编辑器模式：左侧轮廓预览 — warped 图 + 红色轮廓线
         <div className="min-h-full flex items-center justify-center p-8">
-          <div className="flex-1 max-w-4xl">
-            <div
-              className="relative"
-              style={{
-                transform: `scale(${zoom})`,
-                transformOrigin: "center",
-                transition: "transform 0.15s ease-out",
-              }}
-            >
-              {/* 实时预览画布 */}
-              <canvas
-                id="editor-preview-canvas"
+          <div
+            className="relative"
+            style={{
+              transform: `scale(${zoom})`,
+              transformOrigin: "center",
+              transition: "transform 0.15s ease-out",
+            }}
+          >
+            {/* 校正后的实物图 */}
+            {warpedUrl && (
+              <img
+                src={warpedUrl}
+                alt="工具校正图"
                 className="max-w-full max-h-[78vh] rounded-xl shadow-2xl ring-1 ring-white/10"
-                style={{
-                  backgroundColor: '#000',
-                  display: 'block'
-                }}
+                id="editor-warp-img"
               />
-            </div>
+            )}
+            {/* 红色轮廓叠加层 */}
+            <canvas
+              id="editor-contour-canvas"
+              className="absolute inset-0 max-w-full max-h-[78vh] rounded-xl pointer-events-none"
+              style={{ display: 'block' }}
+            />
           </div>
         </div>
       ) : (

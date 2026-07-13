@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useStore } from "@/app/store";
 import type { Primitive } from "@/utils/types";
-import { detectPaper, extractToolMask, simplifyContours, extractContours } from "@/api/toolProcessor";
+import { detectPaper, extractToolMask, extractContours } from "@/api/toolProcessor";
 import { TopBar } from "./TopBar";
 import { LeftRail } from "./LeftRail";
 import { Viewport } from "./Viewport";
@@ -48,6 +48,9 @@ export default function Workspace() {
 
   // 纸张检测结果状态
   const [paperDetectionResult, setPaperDetectionResult] = useState<PaperDetectionResult | null>(null);
+
+  // 轮廓检测失败状态（用于显示重新上传/手动绘制选项）
+  const [detectionFailed, setDetectionFailed] = useState(false);
 
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -98,67 +101,127 @@ export default function Workspace() {
     }
   }, [setStep]);
 
+  // 创建空白蒙版（用于后端完全不可用时兜底）
+  const createBlankMask = useCallback(async (imageUrl: string): Promise<string> => {
+    const img = new Image();
+    img.src = imageUrl;
+    await new Promise<void>((resolve) => { img.onload = () => resolve(); });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    return canvas.toDataURL('image/jpeg');
+  }, []);
+
   // 处理轮廓提取（两步法：先提取蒙版，再简化）
   const processContourExtraction = useCallback(async (file: File) => {
     setProcessing(true);
     setProcessError(null);
-    
+
     try {
       // 如果已经有校正后的图像URL，我们需要从中创建一个File对象
       let fileToProcess = file;
-      
+
       if (warpedUrl) {
         // 从warpedUrl创建Blob，然后创建File对象
         const response = await fetch(warpedUrl);
         const blob = await response.blob();
         fileToProcess = new File([blob], "warped_image.jpg", { type: blob.type });
       }
-      
+
+      let detectionFailed = false;
+
       // 第一步：提取工具轮廓（包括调试图像）
       const contourResult = await extractContours(fileToProcess);
-      
-      if (!contourResult.success || !contourResult.primitives) {
-        setProcessError(contourResult.error || "轮廓提取失败");
-        return;
-      }
-      
-      // 设置调试图像（如果有）
-      if (contourResult.debug_image) {
-        setPrimitiveDebugUrl(contourResult.debug_image);
-      }
-      
-      setPrimitives(contourResult.primitives);
-      
-      // 第二步：提取工具蒙版
-      const maskResult = await extractToolMask(fileToProcess);
-      
-      if (!maskResult.success || !maskResult.mask_image) {
-        setProcessError(maskResult.error || "蒙版提取失败");
-        return;
-      }
-      
-      setMaskUrl(maskResult.mask_image);
-      
-      // 第三步：对蒙版进行抽稀基元化处理
-      const simplifyResult = await simplifyContours({ mask_image: maskResult.mask_image });
-      
-      if (simplifyResult.success && simplifyResult.primitives) {
-        setSimplifiedPrimitives(simplifyResult.primitives);
-        setLocalPrimitives(simplifyResult.primitives);
-        setProcessError(null);
-        
-        // 自动跳转到编辑器步骤
-        setStep("editor");
+
+      if (!contourResult.success) {
+        detectionFailed = true;
       } else {
-        setProcessError(simplifyResult.error || "轮廓简化失败");
+        // 设置调试图像（如果有）
+        if (contourResult.debug_image) {
+          setPrimitiveDebugUrl(contourResult.debug_image);
+        }
+        setPrimitives(contourResult.primitives || []);
+        detectionFailed = !contourResult.primitives || contourResult.primitives.length === 0;
       }
+
+      // 第二步：提取工具蒙版（后端现在总是返回蒙版，检测失败时返回空白蒙版）
+      let finalMaskUrl: string | undefined;
+      const maskResult = await extractToolMask(fileToProcess);
+      if (maskResult.success && maskResult.mask_image) {
+        finalMaskUrl = maskResult.mask_image;
+      } else {
+        // 后端完全不可用时，在前端生成空白蒙版兜底
+        setProcessError("蒙版提取失败，将进入手动编辑模式");
+        if (warpedUrl) {
+          finalMaskUrl = await createBlankMask(warpedUrl);
+        }
+      }
+
+      if (finalMaskUrl) {
+        setMaskUrl(finalMaskUrl);
+      }
+
+      if (detectionFailed) {
+        // 检测失败：显示选项面板，让用户选择手动绘制或重新上传
+        setDetectionFailed(true);
+        setProcessError("未检测到工具轮廓，请选择下一步操作");
+        setProcessing(false);
+        return;
+      }
+
+      // 检测成功，清除失败标记
+      setDetectionFailed(false);
+
+      // 第三步：初始显示使用原始轮廓（不抽稀），用户可后续手动点击「抽稀基元化」
+      const rawPrimitives = contourResult.primitives || [];
+      setSimplifiedPrimitives([]);  // 尚未抽稀
+      setLocalPrimitives(rawPrimitives);
+      setCurrentPrimitives(rawPrimitives);
+
+      // 自动跳转到编辑器步骤
+      setStep("editor");
     } catch (err: any) {
       console.error("[Workspace] extractContours threw:", err);
       setProcessError(err?.message || "轮廓提取失败");
     } finally {
       setProcessing(false);
     }
-  }, [setPrimitives, warpedUrl, setStep]);
+  }, [setPrimitives, warpedUrl, setStep, createBlankMask]);
+
+  // 用户选择「手动绘制」：用空白蒙版直接进入编辑器
+  const handleManualDraw = useCallback(async () => {
+    setDetectionFailed(false);
+    if (warpedUrl) {
+      const blankMask = await createBlankMask(warpedUrl);
+      setMaskUrl(blankMask);
+    }
+    setStep("editor");
+  }, [warpedUrl, setStep, createBlankMask]);
+
+  // 用户选择「重新上传」：回到上传步骤
+  const handleReupload = useCallback(() => {
+    setDetectionFailed(false);
+    setWarpedUrl(undefined);
+    setMaskUrl(undefined);
+    setPrimitiveDebugUrl(undefined);
+    setLocalPrimitives([]);
+    setSimplifiedPrimitives([]);
+    setCurrentPrimitives([]);
+    setProcessError(null);
+    setPaperDetectionResult(null);
+    setStep("upload");
+  }, [setStep]);
+
+  // 用户点击「更新轮廓」（仅预览，不抽稀）
+  const handleUpdateContour = useCallback((primitives: Primitive[]) => {
+    setSimplifiedPrimitives(primitives);
+    setCurrentPrimitives(primitives);
+  }, []);
 
   const handleFile = useCallback(
     (file: File | undefined) => {
@@ -208,8 +271,8 @@ export default function Workspace() {
           step={step}
           primitives={currentPrimitives}
         />
-        <aside className="absolute right-4 top-4 bottom-4 w-80 shrink-0 z-10">
-          <div className="glass-panel rounded-2xl h-full overflow-y-auto canvas-scroll p-4 animate-slide-in-right">
+        <aside className={`absolute right-4 top-4 bottom-4 shrink-0 z-10 transition-all duration-300 ${step === 'editor' ? 'w-[28rem]' : 'w-80'}`}>
+          <div className={`glass-panel rounded-2xl h-full overflow-y-auto canvas-scroll p-4 animate-slide-in-right ${step === 'editor' ? 'flex flex-col' : ''}`}>
             <PlanningPanel
               step={step}
               onUpload={() => fileInputRef.current?.click()}
@@ -241,8 +304,11 @@ export default function Workspace() {
                 setSimplifiedPrimitives(primitives);
                 setCurrentPrimitives(primitives);
               }}
-              originalContour={primitiveDebugUrl}
               warpedUrl={warpedUrl}
+              detectionFailed={detectionFailed}
+              onManualDraw={handleManualDraw}
+              onReupload={handleReupload}
+              onUpdateContour={handleUpdateContour}
             />
           </div>
         </aside>

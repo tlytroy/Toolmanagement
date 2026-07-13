@@ -54,24 +54,48 @@ def import_contour_simplify():
         print(f"警告: 无法导入抽稀基元化模块，将使用简化版本: {e}")
         return None
 
-# 创建模拟函数以避免错误
-def dp_simplify(c, eps_ratio):
-    return c
+# ============================================================
+# DP 抽稀 + 基元拟合（真实实现，对齐 reference/contour_simplify）
+# ============================================================
 
-def line_fit_error(pts):
-    return 0
+def dp_simplify(contour, eps_ratio: float):
+    """Douglas-Peucker 抽稀，返回简化后的轮廓点集"""
+    peri = cv2.arcLength(contour, closed=True)
+    eps = eps_ratio * peri
+    return cv2.approxPolyDP(contour, eps, closed=True)
 
-def circle_fit(pts):
-    return None
 
-def circle_fit_error(pts, circ):
-    return 0
+def line_fit_error(pts: np.ndarray) -> float:
+    """点到最小二乘直线的 RMS 垂直距离"""
+    if len(pts) < 2:
+        return 1e9
+    lp = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
+    vx, vy = float(lp[0][0]), float(lp[1][0])
+    n = np.array([vx, vy]) / (np.hypot(vx, vy) + 1e-9)
+    v0 = pts[0]
+    d = np.abs((pts - v0) @ np.array([-n[1], n[0]]))  # 垂直距离
+    return float(np.sqrt(np.mean(d ** 2)))
 
-def nearest_dense_index(pt):
-    return 0
 
-def points_between(i, j):
-    return []
+def circle_fit(pts: np.ndarray) -> Optional[Tuple[float, float, float]]:
+    """代数最小二乘圆拟合，返回 (cx, cy, r) 或 None"""
+    if len(pts) < 3:
+        return None
+    xs, ys = pts[:, 0].astype(float), pts[:, 1].astype(float)
+    A = np.column_stack([xs, ys, np.ones_like(xs)])
+    b = -(xs ** 2 + ys ** 2)
+    sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+    a, bb, c = sol
+    cx, cy = -a / 2.0, -bb / 2.0
+    r = np.sqrt(max(cx ** 2 + cy ** 2 - c, 1e-6))
+    return (float(cx), float(cy), float(r))
+
+
+def circle_fit_error(pts: np.ndarray, circle: Tuple[float, float, float]) -> float:
+    """圆拟合的 RMS 径向误差"""
+    cx, cy, r = circle
+    d = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy)
+    return float(np.sqrt(np.mean((d - r) ** 2)))
 
 def extract_tool_contours(warped_image: np.ndarray) -> List[Dict[str, Any]]:
     """
@@ -192,18 +216,13 @@ async def extract_tool_mask(file: UploadFile = File(...)):
         # PIL读取的是RGB，需要转换为BGR
         image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
     
-    # 提取工具蒙版
+    # 提取工具轮廓
     contour = extract_tool_contours_v26(image_array)
     
-    if contour is None:
-        return {
-            "success": False,
-            "error": "未检测到工具轮廓"
-        }
-    
-    # 创建蒙版图像
+    # 创建蒙版图像。如果未检测到工具，则返回全黑空白蒙版（用户可以手动绘制）
     mask = np.zeros(image_array.shape[:2], dtype=np.uint8)
-    cv2.drawContours(mask, [contour], -1, 255, cv2.FILLED)
+    if contour is not None:
+        cv2.drawContours(mask, [contour], -1, 255, cv2.FILLED)
     
     # 转换结果为可传输格式
     mask_base64 = image_to_base64(mask)
@@ -231,6 +250,9 @@ async def simplify_contours(mask_data: dict):
                 "error": "无法解码蒙版图像"
             }
         
+        # 二值化保底
+        _, mask_image = cv2.threshold(mask_image, 127, 255, cv2.THRESH_BINARY)
+
         # 从蒙版中提取轮廓
         contours, _ = cv2.findContours(mask_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         if not contours:
@@ -243,71 +265,111 @@ async def simplify_contours(mask_data: dict):
         contour = max(contours, key=cv2.contourArea)
         
         # 使用抽稀基元化算法处理轮廓
-        # 这里我们使用参考实现中的算法
         dense = contour.reshape(-1, 2).astype(np.float64)
-        
+
         # DP抽稀得到拐点顶点
         EPS = 0.004
         verts = dp_simplify(contour, EPS).reshape(-1, 2).astype(np.float64)
         N = len(verts)
-        
+
         if N < 2:
+            # 如果顶点太少，返回原始轮廓作为折线
+            points_list = [{"x": float(p[0]), "y": float(p[1])} for p in dense]
             return {
-                "success": False,
-                "error": "轮廓点数不足"
+                "success": True,
+                "primitives": [{"type": "polyline", "points": points_list}],
+                "summary": {"lines": 0, "polylines": 1, "arcs": 0}
             }
-        
-        # 建立顶点索引映射
-        vert_idx = [nearest_dense_index(v) for v in verts]
-        
+
+        # 建立顶点索引映射（闭包捕获 dense）
+        def _nearest_dense_index(pt: np.ndarray) -> int:
+            d = np.sum((dense - pt) ** 2, axis=1)
+            return int(np.argmin(d))
+
+        vert_idx = [_nearest_dense_index(v) for v in verts]
+
+        def _points_between(i: int, j: int) -> np.ndarray:
+            """取轮廓上从顶点 i 到顶点 j（顺时针）之间的稠密点"""
+            a, b = vert_idx[i], vert_idx[j]
+            if b >= a:
+                return dense[a:b + 1]
+            else:
+                return np.vstack([dense[a:], dense[:b + 1]])
+
         # 逐段基元化：直线 vs 圆弧
         primitives = []
         LIN_TOL = 4.0
         ARC_TOL = 4.0
         MAX_ARC_RADIUS = 55
-        
+
         for k in range(N):
             i, j = k, (k + 1) % N
-            seg = points_between(i, j) if 'points_between' in globals() else dense
+            seg = _points_between(i, j)
             p0 = tuple(map(int, verts[i]))
             p1 = tuple(map(int, verts[j]))
-            
+
             err_l = line_fit_error(seg)
             circ = circle_fit(seg)
             err_c = circle_fit_error(seg, circ) if circ else 1e9
-            
+
             # 判定：圆弧拟合显著优于直线？
             is_arc_better = (err_c < err_l) and (err_c < ARC_TOL) and (err_l > LIN_TOL)
-            
+
             if is_arc_better:
                 cx, cy, r = circ
                 if r <= MAX_ARC_RADIUS:
                     # 真正的弧（曲率足够大）
+                    # 计算起止角度
+                    ang = np.unwrap(np.arctan2(seg[:, 1] - cy, seg[:, 0] - cx))
+                    a0 = float(np.degrees(ang[0]))
+                    a1 = a0 + float(np.degrees(ang[-1] - ang[0]))
+
+                    # 重采样圆弧点列
+                    n_sample = max(12, len(seg) // 3)
+                    theta = np.linspace(np.radians(a0), np.radians(a1), n_sample)
+                    arc_x = cx + r * np.cos(theta)
+                    arc_y = cy + r * np.sin(theta)
+                    points_list = [{"x": float(x), "y": float(y)} for x, y in zip(arc_x, arc_y)]
+
                     primitives.append({
-                        'type': 'arc', 'p0': p0, 'p1': p1,
-                        'center': (float(cx), float(cy)), 'radius': float(r)
+                        'type': 'arc',
+                        'p0': {'x': float(p0[0]), 'y': float(p0[1])},
+                        'p1': {'x': float(p1[0]), 'y': float(p1[1])},
+                        'center': {'x': float(cx), 'y': float(cy)},
+                        'radius': float(r),
+                        'startAngle': float(a0),
+                        'endAngle': float(a1),
+                        'points': points_list
                     })
                 else:
                     # 大半径缓弯 → 退化为折线（对段内点做细粒度 DP）
-                    # 注意：这里需要原始轮廓来计算周长
                     sub_eps = 0.002 * cv2.arcLength(contour, closed=True)
                     poly_approx = cv2.approxPolyDP(
                         seg.reshape(-1, 1, 2).astype(np.int32), sub_eps, closed=False
                     ).reshape(-1, 2)
-                    pts_list = [tuple(map(float, pt)) for pt in poly_approx]
+                    pts_list = [{"x": float(pt[0]), "y": float(pt[1])} for pt in poly_approx]
                     primitives.append({
                         'type': 'polyline', 'points': pts_list,
                     })
             else:
-                primitives.append({'type': 'line', 'p0': p0, 'p1': p1})
+                primitives.append({
+                    'type': 'line',
+                    'p0': {'x': float(p0[0]), 'y': float(p0[1])},
+                    'p1': {'x': float(p1[0]), 'y': float(p1[1])}
+                })
         
+        # 统计各类基元数量
+        n_lines = len([p for p in primitives if p["type"] == "line"])
+        n_polylines = len([p for p in primitives if p["type"] == "polyline"])
+        n_arcs = len([p for p in primitives if p["type"] == "arc"])
+
         return {
             "success": True,
             "primitives": primitives,
             "summary": {
-                "lines": len([p for p in primitives if p["type"] == "line"]),
-                "polylines": len([p for p in primitives if p["type"] == "polyline"]),
-                "arcs": len([p for p in primitives if p["type"] == "arc"])
+                "lines": n_lines,
+                "polylines": n_polylines,
+                "arcs": n_arcs
             }
         }
     except Exception as e:
@@ -318,6 +380,44 @@ async def simplify_contours(mask_data: dict):
             "success": False,
             "error": str(e)
         }
+
+@app.post("/update-contour")
+async def update_contour(mask_data: dict):
+    """
+    仅从蒙版中提取原始轮廓（不抽稀、不基元化），返回 polyline 供前端预览。
+    用于用户反复编辑蒙版时快速预览边界变化。
+    """
+    try:
+        mask_base64 = mask_data.get("mask_image", "").split(",")[1]
+        mask_bytes = base64.b64decode(mask_base64)
+        mask_array = np.frombuffer(mask_bytes, np.uint8)
+        mask_image = cv2.imdecode(mask_array, cv2.IMREAD_GRAYSCALE)
+
+        if mask_image is None:
+            return {"success": False, "error": "无法解码蒙版图像"}
+
+        # 二值化保底：防御 JPEG 压缩伪影（正常用 PNG 不会有此问题）
+        _, mask_image = cv2.threshold(mask_image, 127, 255, cv2.THRESH_BINARY)
+
+        contours, _ = cv2.findContours(mask_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            return {"success": False, "error": "蒙版中未找到轮廓"}
+
+        contour = max(contours, key=cv2.contourArea)
+        pts = contour.reshape(-1, 2).astype(np.float64)
+
+        # 返回原始轮廓为一个 polyline primitive
+        points_list = [{"x": float(p[0]), "y": float(p[1])} for p in pts]
+        return {
+            "success": True,
+            "primitives": [{"type": "polyline", "points": points_list}],
+            "summary": {"lines": 0, "polylines": 1, "arcs": 0}
+        }
+    except Exception as e:
+        print(f"更新轮廓失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

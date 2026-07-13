@@ -236,12 +236,8 @@ def convert_contour_to_primitives(contour: np.ndarray) -> List[Dict[str, Any]]:
     简化版本：将轮廓近似为折线
     """
     try:
-        # 使用Douglas-Peucker算法简化轮廓
-        epsilon = 0.01 * cv2.arcLength(contour, True)
-        simplified = cv2.approxPolyDP(contour, epsilon, True)
-        
-        # 转换为折线基元
-        points = [{"x": float(x), "y": float(y)} for x, y in simplified.reshape(-1, 2)]
+        # 不在此处抽稀——初始检测保留全量轮廓点，抽稀由用户手动触发 /simplify-contours
+        points = [{"x": float(x), "y": float(y)} for x, y in contour.reshape(-1, 2)]
         
         return [{
             "type": "polyline",

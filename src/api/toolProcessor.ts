@@ -41,6 +41,25 @@ export interface SimplifyResult {
 }
 
 /**
+ * 规范化后端返回的 primitive 数据格式
+ * 后端可能返回 [x, y] 数组格式，前端统一转为 {x, y} 对象格式
+ */
+const toPoint = (v: any) =>
+  Array.isArray(v) ? { x: v[0], y: v[1] } : v;
+
+const normalizePrimitive = (p: any): Primitive => {
+  const normal: any = { ...p };
+  if (normal.p0) normal.p0 = toPoint(normal.p0);
+  if (normal.p1) normal.p1 = toPoint(normal.p1);
+  if (normal.center) normal.center = toPoint(normal.center);
+  if (normal.points) normal.points = normal.points.map(toPoint);
+  return normal as Primitive;
+};
+
+const normalizePrimitiveArray = (arr: any[]): Primitive[] =>
+  (arr || []).map(normalizePrimitive);
+
+/**
  * 检测纸张四角
  * @param file 图片文件
  * @returns 纸张检测结果
@@ -105,6 +124,9 @@ export const extractContours = async (
     }
 
     const result = await response.json();
+    if (result.primitives) {
+      result.primitives = normalizePrimitiveArray(result.primitives);
+    }
     return result;
   } catch (error) {
     console.error("Error extracting contours:", error);
@@ -170,6 +192,37 @@ export const extractToolMask = async (file: File): Promise<MaskResult> => {
 };
 
 /**
+ * 仅更新轮廓（不抽稀），返回原始 polyline 用于预览
+ * @param maskData 蒙版数据
+ * @returns 原始轮廓 polyline
+ */
+export const updateContour = async (maskData: {
+  mask_image: string;
+}): Promise<SimplifyResult> => {
+  try {
+    const response = await fetch("http://localhost:8001/update-contour", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(maskData),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const result = await response.json();
+    if (result.primitives) {
+      result.primitives = normalizePrimitiveArray(result.primitives);
+    }
+    return result;
+  } catch (error) {
+    console.error("Error updating contour:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+};
+
+/**
  * 简化轮廓（抽稀基元化）
  * @param maskData 蒙版数据
  * @returns 简化后的基元
@@ -177,6 +230,7 @@ export const extractToolMask = async (file: File): Promise<MaskResult> => {
 export const simplifyContours = async (maskData: {
   mask_image: string;
 }): Promise<SimplifyResult> => {
+
   try {
     const response = await fetch("http://localhost:8001/simplify-contours", {
       method: "POST",
@@ -191,6 +245,9 @@ export const simplifyContours = async (maskData: {
     }
 
     const result = await response.json();
+    if (result.primitives) {
+      result.primitives = normalizePrimitiveArray(result.primitives);
+    }
     return result;
   } catch (error) {
     console.error("Error simplifying contours:", error);

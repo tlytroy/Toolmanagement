@@ -11,10 +11,9 @@ interface SegmentationPanelProps {
   primitives: Primitive[];
   primitiveDebugUrl?: string;
   processContourExtraction?: (file: File) => Promise<void>;
-  // maskUrl?: string; // 暂时注释掉未使用的变量
-  // onMaskUpdate?: (updatedMask: string) => void; // 暂时注释掉未使用的变量
-  // simplifiedPrimitives: Primitive[]; // 暂时注释掉未使用的变量
-  // setSimplifiedPrimitives: (primitives: Primitive[]) => void; // 暂时注释掉未使用的变量
+  detectionFailed?: boolean;
+  onManualDraw?: () => void;
+  onReupload?: () => void;
 }
 
 export function SegmentationPanel({
@@ -25,10 +24,9 @@ export function SegmentationPanel({
   primitives,
   primitiveDebugUrl,
   processContourExtraction,
-  // maskUrl, // 暂时注释掉未使用的变量
-  // onMaskUpdate, // 暂时注释掉未使用的变量
-  // simplifiedPrimitives, // 暂时注释掉未使用的变量
-  // setSimplifiedPrimitives // 暂时注释掉未使用的变量
+  detectionFailed,
+  onManualDraw,
+  onReupload,
 }: SegmentationPanelProps) {
   return (
     <div className="space-y-4">
@@ -66,8 +64,42 @@ export function SegmentationPanel({
           </>
         )}
       </Button>
-      
-      {extractError && (
+
+      {detectionFailed && (
+        <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 space-y-3">
+          <div className="flex items-start gap-2">
+            <Icon name="alert" size={16} className="text-amber-400 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-amber-300 text-sm font-medium">未检测到工具轮廓</p>
+              <p className="text-amber-300/70 text-[12px] mt-0.5">
+                自动检测未能识别工具，您可以选择手动绘制或重新拍摄。
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              className="flex-1"
+              onClick={onManualDraw}
+            >
+              <Icon name="pencil" size={14} />
+              手动绘制
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="flex-1"
+              onClick={onReupload}
+            >
+              <Icon name="arrowLeft" size={14} />
+              重新上传
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {extractError && !detectionFailed && (
         <div className="flex items-start gap-2 rounded-xl bg-red-500/10 border border-red-500/30 p-3">
           <Icon name="alert" size={16} className="text-red-400 mt-0.5 shrink-0" />
           <div>

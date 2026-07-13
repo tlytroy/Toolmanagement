@@ -170,12 +170,21 @@
 
 | 本文档项 | WSL 落地位置 | 状态 |
 |-----------|---------------|------|
-| F1.3 透视校正 | `opencvUtils.ts` detectPaperCorners + `CalibrationPage` | ✅ 已实现 |
-| F1.4 智能掩码（Fast∪SAM） | `extractFastMask` + `prepareSamMask` + `segmentDetail` | ✅ Fast 已验证；SAM 后处理已写，推理待接 |
-| F2.1 轮廓平滑 | `segmentDetail` Chaikin | ✅ |
-| F2.2 矢量拟合 Line/Arc | `extractPrimitives`（DP 逐段法） | ✅ 已 1:1 验证 |
-| F2.4 基元可视化 | `drawPrimitives`（绿直线/橙圆弧） | ✅ |
-| F5.1 STL 导出 / F5.2 STEP 导出 | 见 `DEVELOPMENT_GUIDE.md` §六/§七：纯 JS 路线降级，主路径改 Python 后端（pythonocc） | ⏳ 待桥接层实现 |
-| 后端 B1-B6 / 前端 F1-F6 | 见 `DEVELOPMENT_GUIDE.md` §七 桌面化桥接层 | ⏳ 待实现 |
-| F1.6 画廊/历史、F2.5 手动描边、F2.6 自定义形状、F2.7 Detail 精度、F3.10 Gridfinity 模式、F3.11 对称、F3.12 导入、F5.5 PDF 校对 | 本次对标补全（原 PRD 缺失，见 Tooltrace 实际功能对账） | 🆕 新建需求 |
+| F1.3 透视校正 | `python_backend/latest_paper_detection.py` → `reference/robust_paper_detector.py` ; 前端 `CalibrationPanel.tsx` | ✅ 已实现（Python 后端） |
+| F1.4 智能掩码 | `python_backend/sam_tool_contour.py` extract_tool_contours_v26 (v26 传统 CV 四路径并集) | ✅ v26 已验证；不再使用 SAM |
+| F2.1 轮廓平滑 | v26 环形高斯平滑 (sigma=2.0) | ✅ |
+| F2.2 矢量拟合 Line/Arc | `main.py` `/simplify-contours`：DP 抽稀 + 最小二乘 line/arc 拟合（2026-07-10 接入） | ✅ 已实现 |
+| F2.4 基元可视化 | `Viewport.tsx` Canvas 绘制红色轮廓线 + `MaskEditor.tsx` 原生 Canvas 3 层叠加 | ✅ 已实现 |
+| F2.5 手动描边修正 | `MaskEditor.tsx` 画笔/橡皮 + 形状工具(直线/折线/矩形/椭圆) + 防抖修正 + 双按钮预览/抽稀 | ✅ 已实现，缺撤销/重做/控制点拖拽 |
+| F5.1 STL 导出 / F5.2 STEP 导出 | Python 后端 pythonocc（待开发） | ⏳ 待实现 |
+| 后端 B1 API 服务 | `python_backend/main.py` FastAPI 4 端点 | ✅ 已实现 |
+| 后端 B2 算法引擎 | `python_backend/sam_tool_contour.py` + `latest_paper_detection.py` | ✅ 已封装 |
+| 后端 B3 基元化 | `python_backend/main.py` `/simplify-contours`：DP 抽稀 + line/arc/polyline 拟合 | ✅ 已实现 |
+| 后端 B4-B8 (排版/CAD/数据模型/模式引擎/画廊) | 未开始 | ⏳ 待实现 |
+| 前端 F1 UI | React + TailwindCSS + 6 组件 UI 体系 | ✅ 已实现 |
+| 前端 F2 3D | Three.js (Viewport 占位，待接入后端几何) | ⏳ 待实现 |
+| 前端 F4 状态管理 | Zustand store (`src/app/store.ts`) | ✅ 已实现 |
+| 前端 F5 通信 | `src/api/toolProcessor.ts` 封装 4 个端点 | ✅ 已实现 |
+| F2.6 自定义形状绘制 | `MaskEditor.tsx` 形状工具：直线/折线/矩形/椭圆（填充模式） | ✅ 基础形状已实现 |
+| F2.7 Detail 精度、F3.10 Gridfinity 模式、F3.11 对称、F3.12 导入、F5.5 PDF 校对 | 未开始 | 🆕 新建需求 |
 | 范围声明（个人使用） | 完整对标功能能力；**不含** 云端账户/社区发布/评分/分享短链/付费墙/5S-B2B 话术 | — |
