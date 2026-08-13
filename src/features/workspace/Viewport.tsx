@@ -1,5 +1,9 @@
 import { Icon } from "@/components/ui/icons";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { useStore } from "@/app/store";
 
 interface ViewportProps {
   imgUrl?: string;
@@ -17,7 +21,7 @@ interface ViewportProps {
   onFit: () => void;
   onToggleGrid: () => void;
   step?: string;
-  primitives?: any[]; // 基元数据用于显示轮廓
+  primitives?: any[];
 }
 
 function ViewportToolBtn({
@@ -46,6 +50,130 @@ function ViewportToolBtn({
   );
 }
 
+function CADPreview({ stlBase64 }: { stlBase64: string }) {
+  const mountRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!mountRef.current) return;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+
+    const container = mountRef.current;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 1000);
+    camera.position.set(80, 60, 120);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.1;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 2;
+    controls.target.set(0, 0, 0);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(50, 100, 50);
+    scene.add(dirLight);
+
+    const fillLight = new THREE.DirectionalLight(0x8888ff, 0.5);
+    fillLight.position.set(-50, 20, -50);
+    scene.add(fillLight);
+
+    const gridHelper = new THREE.GridHelper(200, 20, 0x444466, 0x333355);
+    scene.add(gridHelper);
+
+    const loader = new STLLoader();
+    const byteString = atob(stlBase64);
+    const bytes = new Uint8Array(byteString.length);
+    for (let i = 0; i < byteString.length; i++) {
+      bytes[i] = byteString.charCodeAt(i);
+    }
+    const geometry = loader.parse(bytes.buffer);
+
+    // Auto-center
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox!;
+    const cx = (box.max.x + box.min.x) / 2;
+    const cy = (box.max.y + box.min.y) / 2;
+    const cz = (box.max.z + box.min.z) / 2;
+    geometry.translate(-cx, -cy, -cz);
+
+    // Scale to fit viewport (~60 units max dimension)
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale = maxDim > 0 ? 60 / maxDim : 1;
+    geometry.scale(scale, scale, scale);
+
+    const material = new THREE.MeshPhysicalMaterial({
+      color: 0x4a9eff,
+      metalness: 0.1,
+      roughness: 0.4,
+      clearcoat: 0.1,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+
+    // Place on grid plane
+    geometry.computeBoundingBox();
+    const bb = geometry.boundingBox!;
+    const minY = bb.min.y;
+    mesh.position.y = -minY;
+    scene.add(mesh);
+
+    // Wireframe edges
+    const edges = new THREE.EdgesGeometry(geometry);
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x88ccff, transparent: true, opacity: 0.25 });
+    const wireframe = new THREE.LineSegments(edges, edgeMat);
+    wireframe.position.y = -minY;
+    scene.add(wireframe);
+
+    let animId: number;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const onResize = () => {
+      const w2 = container.clientWidth;
+      const h2 = container.clientHeight;
+      camera.aspect = w2 / h2;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w2, h2);
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener("resize", onResize);
+      controls.dispose();
+      renderer.dispose();
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
+      }
+    };
+  }, [stlBase64]);
+
+  return (
+    <div
+      ref={mountRef}
+      className="w-full h-full rounded-xl overflow-hidden"
+      style={{ minHeight: "400px" }}
+    />
+  );
+}
+
 export function Viewport({
   imgUrl,
   warpedUrl,
@@ -64,7 +192,9 @@ export function Viewport({
   step,
   primitives,
 }: ViewportProps) {
-  // 当 primitives 变化时，在左侧轮廓预览画布上绘制红色轮廓线
+  const { cadResult } = useStore();
+
+  // Draw contour overlay on editor canvas
   useEffect(() => {
     if (step !== "editor" || !primitives || primitives.length === 0) return;
 
@@ -72,10 +202,8 @@ export function Viewport({
     const warpImg = document.getElementById('editor-warp-img') as HTMLImageElement;
     if (!canvas || !warpImg) return;
 
-    // 等 warp 图完全加载后匹配尺寸
     const setupAndDraw = () => {
       if (!warpImg.naturalWidth) {
-        // 图片还没加载完，延迟重试
         setTimeout(setupAndDraw, 50);
         return;
       }
@@ -88,7 +216,6 @@ export function Viewport({
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // 红色轮廓线
       ctx.strokeStyle = '#ef4444';
       ctx.lineWidth = 2.5;
       ctx.lineCap = 'round';
@@ -96,7 +223,6 @@ export function Viewport({
       ctx.shadowColor = 'rgba(239, 68, 68, 0.5)';
       ctx.shadowBlur = 3;
 
-      // Helper: backend may return [x, y] arrays instead of {x, y} objects
       const toPt = (v: any) =>
         Array.isArray(v) ? { x: v[0], y: v[1] } : v;
 
@@ -112,23 +238,23 @@ export function Viewport({
           }
         } else if (primitive.type === 'arc') {
           const c = toPt(primitive.center);
-          if (c && primitive.radius && primitive.seg_pts && primitive.seg_pts.length > 0) {
-            const seg = primitive.seg_pts;
-            // 计算 seg_pts 中每个点相对于中心的角度
+          const arcPts = primitive.points || primitive.seg_pts;
+          if (c && primitive.radius && arcPts && arcPts.length > 0) {
+            const seg = arcPts;
             const angles = seg.map((pt: any) => {
               const x = typeof pt.x === 'number' ? pt.x : pt[0];
               const y = typeof pt.y === 'number' ? pt.y : pt[1];
               return Math.atan2(y - c.y, x - c.x);
             });
-            // unwrap 角度消除 2π 跳变
             for (let i = 1; i < angles.length; i++) {
               while (angles[i] - angles[i - 1] > Math.PI) angles[i] -= 2 * Math.PI;
               while (angles[i] - angles[i - 1] < -Math.PI) angles[i] += 2 * Math.PI;
             }
             const a0 = angles[0];
             const a1 = angles[angles.length - 1];
+            const counterclockwise = a1 > a0;
             ctx.beginPath();
-            ctx.arc(c.x, c.y, primitive.radius, a0, a1, a1 > a0);
+            ctx.arc(c.x, c.y, primitive.radius, a0, a1, counterclockwise);
             ctx.stroke();
           }
         } else if (primitive.type === 'polyline' && primitive.points) {
@@ -144,13 +270,25 @@ export function Viewport({
         }
       });
 
-      // Reset shadow
       ctx.shadowBlur = 0;
     };
 
-    // Delay to let the canvas render in DOM
     requestAnimationFrame(setupAndDraw);
   }, [primitives, step, warpedUrl]);
+
+  // Export mode: 3D preview
+  if (step === "export" && cadResult.stl_base64) {
+    return (
+      <main className="relative flex-1 min-w-0 bg-canvas-950 overflow-hidden">
+        <CADPreview stlBase64={cadResult.stl_base64} />
+        <div className="absolute top-4 left-4 glass-bar rounded-full px-3 py-1.5 flex items-center gap-2 text-xs text-zinc-300">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          3D 模型预览
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main
       className={`relative flex-1 min-w-0 canvas-scroll overflow-auto ${
@@ -178,7 +316,6 @@ export function Viewport({
           />
         </label>
       ) : step === "editor" ? (
-        // 编辑器模式：左侧轮廓预览 — warped 图 + 红色轮廓线
         <div className="min-h-full flex items-center justify-center p-8">
           <div
             className="relative"
@@ -188,7 +325,6 @@ export function Viewport({
               transition: "transform 0.15s ease-out",
             }}
           >
-            {/* 校正后的实物图 */}
             {warpedUrl && (
               <img
                 src={warpedUrl}
@@ -197,7 +333,6 @@ export function Viewport({
                 id="editor-warp-img"
               />
             )}
-            {/* 红色轮廓叠加层 */}
             <canvas
               id="editor-contour-canvas"
               className="absolute inset-0 max-w-full max-h-[78vh] rounded-xl pointer-events-none"
@@ -206,7 +341,6 @@ export function Viewport({
           </div>
         </div>
       ) : (
-        // 其他模式：居中显示单张大图
         <div className="min-h-full flex items-center justify-center p-8">
           <div
             className="relative"
@@ -238,7 +372,6 @@ export function Viewport({
         </div>
       )}
 
-      {/* 左上：阶段指示 */}
       {hasImage && (
         <div className="absolute top-4 left-4 glass-bar rounded-full px-3 py-1.5 flex items-center gap-2 text-xs text-zinc-300">
           <span
@@ -257,7 +390,6 @@ export function Viewport({
         </div>
       )}
 
-      {/* 底部居中：画布工具条 */}
       {hasImage && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 glass-bar rounded-full px-2 py-1.5 flex items-center gap-1 text-zinc-300">
           <ViewportToolBtn icon="pointer" active title="选择" />
@@ -272,13 +404,12 @@ export function Viewport({
         </div>
       )}
 
-      {/* 左下：3D 预览占位（诚实标记为待接入） */}
-      {hasImage && (
+      {hasImage && step !== "export" && (
         <div className="absolute bottom-4 left-4 glass-bar rounded-xl px-3 py-2 flex items-center gap-2 text-xs">
           <Icon name="box" size={15} className="text-zinc-400" />
           <div className="leading-tight">
             <p className="text-zinc-300 font-medium">3D 预览区</p>
-            <p className="text-zinc-500 text-[11px]">后端几何待接入</p>
+            <p className="text-zinc-500 text-[11px]">生成模型后在此预览</p>
           </div>
         </div>
       )}

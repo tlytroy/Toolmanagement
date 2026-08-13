@@ -36,12 +36,10 @@ export default function Workspace() {
 
   const [imgUrl, setImgUrl] = useState<string | undefined>(imageUrl ?? undefined);
   const [warpedUrl, setWarpedUrl] = useState<string | undefined>();
-  const [primitives, setLocalPrimitives] = useState<Primitive[]>([]);
   const [primitiveDebugUrl, setPrimitiveDebugUrl] = useState<string | undefined>();
   const [processing, setProcessing] = useState(false);
   const [processError, setProcessError] = useState<string | null>(null);
 
-  // 新增状态用于分步处理
   const [maskUrl, setMaskUrl] = useState<string | undefined>();
   const [simplifiedPrimitives, setSimplifiedPrimitives] = useState<Primitive[]>([]);
   const [currentPrimitives, setCurrentPrimitives] = useState<Primitive[]>([]);
@@ -62,7 +60,6 @@ export default function Workspace() {
   useEffect(() => {
     if (imageUrl) {
       setImgUrl(imageUrl);
-      setLocalPrimitives([]);
       setPrimitiveDebugUrl(undefined);
       setProcessError(null);
       setZoom(1);
@@ -71,6 +68,7 @@ export default function Workspace() {
 
   // 处理图片（纸张检测）
   const processPaperDetection = useCallback(async (file: File) => {
+    if (!file) return;
     setProcessing(true);
     setProcessError(null);
     setPaperDetectionResult(null);
@@ -118,19 +116,26 @@ export default function Workspace() {
   }, []);
 
   // 处理轮廓提取（两步法：先提取蒙版，再简化）
-  const processContourExtraction = useCallback(async (file: File) => {
+  const processContourExtraction = useCallback(async () => {
+    if (!warpedUrl) {
+      setProcessError("没有可用的校正图像，请先完成纸张检测");
+      return;
+    }
     setProcessing(true);
     setProcessError(null);
 
     try {
-      // 如果已经有校正后的图像URL，我们需要从中创建一个File对象
-      let fileToProcess = file;
-
-      if (warpedUrl) {
-        // 从warpedUrl创建Blob，然后创建File对象
+      // 从warpedUrl创建File对象（warpedUrl 是 data URL，fetch 安全）
+      let fileToProcess: File;
+      try {
         const response = await fetch(warpedUrl);
         const blob = await response.blob();
         fileToProcess = new File([blob], "warped_image.jpg", { type: blob.type });
+      } catch (fetchErr) {
+        console.error("[Workspace] 无法从 warpedUrl 创建 File:", fetchErr);
+        setProcessError("无法处理校正图像，请重新上传");
+        setProcessing(false);
+        return;
       }
 
       let detectionFailed = false;
@@ -151,15 +156,18 @@ export default function Workspace() {
 
       // 第二步：提取工具蒙版（后端现在总是返回蒙版，检测失败时返回空白蒙版）
       let finalMaskUrl: string | undefined;
-      const maskResult = await extractToolMask(fileToProcess);
-      if (maskResult.success && maskResult.mask_image) {
-        finalMaskUrl = maskResult.mask_image;
-      } else {
-        // 后端完全不可用时，在前端生成空白蒙版兜底
-        setProcessError("蒙版提取失败，将进入手动编辑模式");
-        if (warpedUrl) {
+      try {
+        const maskResult = await extractToolMask(fileToProcess);
+        if (maskResult.success && maskResult.mask_image) {
+          finalMaskUrl = maskResult.mask_image;
+        } else {
+          setProcessError("蒙版提取失败，将进入手动编辑模式");
           finalMaskUrl = await createBlankMask(warpedUrl);
         }
+      } catch (maskErr) {
+        console.error("[Workspace] extractToolMask threw:", maskErr);
+        setProcessError("蒙版提取失败，将进入手动编辑模式");
+        finalMaskUrl = await createBlankMask(warpedUrl);
       }
 
       if (finalMaskUrl) {
@@ -180,7 +188,6 @@ export default function Workspace() {
       // 第三步：初始显示使用原始轮廓（不抽稀），用户可后续手动点击「抽稀基元化」
       const rawPrimitives = contourResult.primitives || [];
       setSimplifiedPrimitives([]);  // 尚未抽稀
-      setLocalPrimitives(rawPrimitives);
       setCurrentPrimitives(rawPrimitives);
 
       // 自动跳转到编辑器步骤
@@ -209,7 +216,6 @@ export default function Workspace() {
     setWarpedUrl(undefined);
     setMaskUrl(undefined);
     setPrimitiveDebugUrl(undefined);
-    setLocalPrimitives([]);
     setSimplifiedPrimitives([]);
     setCurrentPrimitives([]);
     setProcessError(null);
@@ -219,7 +225,7 @@ export default function Workspace() {
 
   // 用户点击「更新轮廓」（仅预览，不抽稀）
   const handleUpdateContour = useCallback((primitives: Primitive[]) => {
-    setSimplifiedPrimitives(primitives);
+    // 仅更新 currentPrimitives（用于 Viewport 预览），不更新 simplifiedPrimitives
     setCurrentPrimitives(primitives);
   }, []);
 
@@ -228,11 +234,10 @@ export default function Workspace() {
       if (!file || !file.type.startsWith("image/")) return;
       const url = URL.createObjectURL(file);
       setImageUrl(url);
-      setStep("calibration");
-      // 自动触发纸张检测
+      // processPaperDetection 内部会设置步骤（成功→segmentation，失败→calibration）
       processPaperDetection(file);
     },
-    [setImageUrl, setStep, processPaperDetection],
+    [setImageUrl, processPaperDetection],
   );
 
   const onZoomIn = () => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100));
@@ -280,7 +285,7 @@ export default function Workspace() {
               extracting={false}
               extractError={null}
               debugUrl={!!warpedUrl}
-              primitives={primitives}
+               primitives={currentPrimitives}
               primitiveDebugUrl={primitiveDebugUrl}
               onRedetect={() => {
                 // 重新检测，使用当前的图像文件
@@ -322,7 +327,7 @@ export default function Workspace() {
           const file = e.target.files?.[0];
           if (file) {
             handleFile(file);
-            processPaperDetection(file);
+            // handleFile 内部已调用 processPaperDetection，无需重复调用
           }
         }}
       />

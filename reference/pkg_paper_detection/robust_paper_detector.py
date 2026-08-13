@@ -162,12 +162,17 @@ def warp_paper(img, corners, ratio=1.414):
     d30 = np.linalg.norm(pts[3] - pts[0])
     w_edge = (d01 + d23) / 2.0
     h_edge = (d12 + d30) / 2.0
+    # A4 标准长宽比 1.414，输出始终保证 长边/短边 = ratio
     if w_edge / max(1, h_edge) > 1:
+        # 宽 > 高：说明长边是宽，短边是高
+        # 输出：宽 = 长边，高 = 长边/ratio（短边）
         pw = int(w_edge)
         ph = int(w_edge / ratio)
     else:
+        # 高 > 宽：说明长边是高，短边是宽
+        # 输出：高 = 长边，宽 = 长边/ratio（短边）
         ph = int(h_edge)
-        pw = int(h_edge * ratio)
+        pw = int(h_edge / ratio)
     dst = np.array([[0, 0], [pw, 0], [pw, ph], [0, ph]], np.float32)
     M = cv2.getPerspectiveTransform(pts, dst)
     return cv2.warpPerspective(img, M, (pw, ph))

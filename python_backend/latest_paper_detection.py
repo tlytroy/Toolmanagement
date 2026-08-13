@@ -37,63 +37,33 @@ def detect_paper_corners_latest(image_array: np.ndarray) -> List[Dict[str, float
 
 def warp_paper_latest(image_array: np.ndarray, corners: List[Dict[str, float]]) -> np.ndarray:
     """
-    使用最新的透视校正算法，修复图像被压扁的问题
+    使用最新的透视校正算法，修复图像被压扁的问题。
+    使用 robust_paper_detector.warp_paper 并传入 A4 比例 (1.414)。
     """
     try:
-        # 转换角点格式
+        # 转换角点格式为 (4, 2) numpy array
         pts = np.array([[p["x"], p["y"]] for p in corners], dtype=np.float32)
         
-        # 使用固定的A4尺寸进行透视校正，避免图像被压扁
-        # A4标准尺寸：210mm x 297mm，使用4px/mm的分辨率
-        width = 210 * 4  # 840 pixels
-        height = 297 * 4  # 1188 pixels
+        # 使用 robust_paper_detector 的 warp_paper，传入 A4 宽高比
+        # width/height = 210/297 ≈ 0.707, 所以 ratio = 297/210 ≈ 1.414
+        warped = warp_paper(image_array, pts, ratio=1.414)
         
-        # 目标点（左上、右上、右下、左下）
+        return warped
+    except Exception as e:
+        print(f"最新透视校正执行出错: {e}")
+        # 如果新算法失败，回退到内联实现
+        pts = np.array([[p["x"], p["y"]] for p in corners], dtype=np.float32)
+        width = 210 * 4
+        height = 297 * 4
         dst_pts = np.array([
             [0, 0],
             [width - 1, 0],
             [width - 1, height - 1],
             [0, height - 1]
         ], dtype=np.float32)
-        
-        # 计算透视变换矩阵
         matrix = cv2.getPerspectiveTransform(pts, dst_pts)
-        
-        # 应用透视变换
         warped = cv2.warpPerspective(image_array, matrix, (width, height))
-        
         return warped
-    except Exception as e:
-        print(f"最新透视校正执行出错: {e}")
-        # 如果新算法失败，回退到原来的实现
-        return _fallback_perspective_warp(image_array, corners)
-
-def _fallback_perspective_warp(image_array: np.ndarray, corners: List[Dict[str, float]]) -> np.ndarray:
-    """
-    回退的透视校正实现
-    """
-    # 提取角点坐标
-    pts = np.array([[p["x"], p["y"]] for p in corners], dtype=np.float32)
-    
-    # 计算目标矩形的宽度和高度，确保正确的A4比例
-    width = 210 * 4  # A4纸比例，假设4px/mm
-    height = 297 * 4
-    
-    # 目标点（左上、右上、右下、左下）
-    dst_pts = np.array([
-        [0, 0],
-        [width - 1, 0],
-        [width - 1, height - 1],
-        [0, height - 1]
-    ], dtype=np.float32)
-    
-    # 计算透视变换矩阵
-    matrix = cv2.getPerspectiveTransform(pts, dst_pts)
-    
-    # 应用透视变换
-    warped = cv2.warpPerspective(image_array, matrix, (width, height))
-    
-    return warped
 
 def test_latest_paper_detection():
     """测试最新的纸张检测"""

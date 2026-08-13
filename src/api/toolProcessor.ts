@@ -44,8 +44,7 @@ export interface SimplifyResult {
  * 规范化后端返回的 primitive 数据格式
  * 后端可能返回 [x, y] 数组格式，前端统一转为 {x, y} 对象格式
  */
-const toPoint = (v: any) =>
-  Array.isArray(v) ? { x: v[0], y: v[1] } : v;
+const toPoint = (v: any) => (Array.isArray(v) ? { x: v[0], y: v[1] } : v);
 
 const normalizePrimitive = (p: any): Primitive => {
   const normal: any = { ...p };
@@ -138,27 +137,79 @@ export const extractContours = async (
   }
 };
 
+import type { CADParams } from "@/app/store";
+
+// ... (keep this import separate in the actual file)
+
 /**
- * 生成3D模型（后续实现）
+ * 生成 CAD 3D 模型（STL base64）
+ * @param params CAD 参数
  * @param primitives 基元数据
- * @returns 3D文件blob
+ * @returns STL base64 + 统计信息
  */
-export const generate3DModel = async (
+export const generateCAD = async (
+  params: CADParams,
   primitives: Primitive[],
-): Promise<Blob> => {
-  const response = await fetch("http://localhost:8001/generate-3d", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ primitives }),
-  });
+): Promise<{
+  success: boolean;
+  error?: string;
+  stl_base64?: string;
+  summary?: {
+    vertices: number;
+    faces: number;
+    volume_mm3: number;
+    bounds: { x: number[]; y: number[]; z: number[] };
+    length_mm?: number;
+    width_mm?: number;
+    height_mm?: number;
+    fillet_radius?: number;
+    units_x?: number;
+    units_y?: number;
+    height_u?: number;
+  };
+}> => {
+  try {
+    const body: any = {
+      mode: params.mode,
+      primitives,
+      embed_depth: params.embed_depth,
+      tool_offset: params.tool_offset,
+    };
 
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    if (params.mode === "foam") {
+      body.foam = {
+        length_mm: params.length_mm,
+        width_mm: params.width_mm,
+        height_mm: params.height_mm,
+        fillet_radius: params.fillet_radius,
+      };
+    } else {
+      body.gridfinity = {
+        units_x: params.units_x,
+        units_y: params.units_y,
+        height_u: params.height_u,
+        has_magnet_holes: params.has_magnet_holes,
+      };
+    }
+
+    const response = await fetch("http://localhost:8001/generate-cad", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error generating CAD:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
   }
-
-  return await response.blob();
 };
 
 /**
@@ -230,7 +281,6 @@ export const updateContour = async (maskData: {
 export const simplifyContours = async (maskData: {
   mask_image: string;
 }): Promise<SimplifyResult> => {
-
   try {
     const response = await fetch("http://localhost:8001/simplify-contours", {
       method: "POST",

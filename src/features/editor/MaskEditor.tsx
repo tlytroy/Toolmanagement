@@ -106,11 +106,16 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
+  const bgOffscreenRef = useRef<HTMLCanvasElement | null>(null);  // 预渲染半透明背景
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const maskImageDataRef = useRef<ImageData | null>(null);
   const stabilizerRef = useRef(new StrokeStabilizer());
   const prevSmoothedRef = useRef<Point | null>(null);
   const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rafRef = useRef<number | null>(null);      // requestAnimationFrame handle
+  const dirtyRef = useRef(false);                    // 是否需要重绘
+  const emitMaskUpdateRef = useRef<() => void>(() => {});  // ref to latest emitMaskUpdate to avoid stale closures
+  const historyIndexRef = useRef(0);  // ref to latest historyIndex for use inside functional updaters
 
   // --- State ---
   const [isDrawing, setIsDrawing] = useState(false);
@@ -213,28 +218,70 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
     octx.drawImage(mask, 0, 0);
     maskImageDataRef.current = octx.getImageData(0, 0, w, h);
 
+    // 预渲染半透明背景到离屏 canvas（避免每帧重复 alpha 合成）
+    if (bgImageRef.current) {
+      let bgOff = bgOffscreenRef.current;
+      if (!bgOff || bgOff.width !== w || bgOff.height !== h) {
+        bgOff = document.createElement('canvas');
+        bgOff.width = w;
+        bgOff.height = h;
+        bgOffscreenRef.current = bgOff;
+      }
+      const bgCtx = bgOff.getContext('2d')!;
+      bgCtx.fillStyle = '#000000';
+      bgCtx.fillRect(0, 0, w, h);
+      bgCtx.globalAlpha = 0.30;
+      bgCtx.drawImage(bgImageRef.current, 0, 0);
+      bgCtx.globalAlpha = 1.0;
+    }
+
     renderDisplay();
     setLoaded(true);
   };
 
-  /** Composite: background → offscreen mask → display canvas */
+  /** Composite: prerendered background → offscreen mask → display canvas */
   const renderDisplay = () => {
     const canvas = displayCanvasRef.current;
+    const prev = previewCanvasRef.current;
     const off = offscreenRef.current;
+    const bgOff = bgOffscreenRef.current;
     if (!canvas || !off) return;
 
-    canvas.width = off.width;
-    canvas.height = off.height;
+    // 确保所有画布尺寸同步
+    if (canvas.width !== off.width || canvas.height !== off.height) {
+      canvas.width = off.width;
+      canvas.height = off.height;
+    }
+
+    // 同步预览画布尺寸
+    if (prev && (prev.width !== canvas.width || prev.height !== canvas.height)) {
+      prev.width = canvas.width;
+      prev.height = canvas.height;
+    }
+
     const ctx = canvas.getContext('2d')!;
 
-    if (bgImageRef.current) {
-      ctx.globalAlpha = 0.30;
-      ctx.drawImage(bgImageRef.current, 0, 0);
-      ctx.globalAlpha = 1.0;
+    // 用预渲染的半透明背景（一次 drawImage 替代 alpha 合成）
+    if (bgOff) {
+      ctx.drawImage(bgOff, 0, 0);
+    } else {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
     ctx.drawImage(off, 0, 0);
   };
+
+  /** 用 requestAnimationFrame 节流渲染：一帧只渲染一次 */
+  const scheduleRender = useCallback(() => {
+    if (dirtyRef.current) return;  // 已标记脏，等待 rAF
+    dirtyRef.current = true;
+    rafRef.current = requestAnimationFrame(() => {
+      dirtyRef.current = false;
+      rafRef.current = null;
+      renderDisplay();
+    });
+  }, []);
 
   /** Clear preview canvas */
   const clearPreview = () => {
@@ -320,9 +367,18 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
     const canvas = displayCanvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / rect.width;
-    const sy = canvas.height / rect.height;
-    return { x: (clientX - rect.left) * sx, y: (clientY - rect.top) * sy };
+
+    // object-contain 会导致 letterboxing（黑边），需要计算实际内容区域
+    const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+    const contentW = canvas.width * scale;
+    const contentH = canvas.height * scale;
+    const offsetX = (rect.width - contentW) / 2;
+    const offsetY = (rect.height - contentH) / 2;
+
+    return {
+      x: (clientX - rect.left - offsetX) / scale,
+      y: (clientY - rect.top - offsetY) / scale
+    };
   }, []);
 
   // ====================================================
@@ -337,8 +393,8 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
     octx.beginPath();
     octx.arc(cx, cy, brushSize / 2, 0, Math.PI * 2);
     octx.fill();
-    renderDisplay();
-  }, [paintMode, brushSize]);
+    scheduleRender();
+  }, [paintMode, brushSize, scheduleRender]);
 
   const drawSegment = useCallback((from: Point, to: Point) => {
     const off = offscreenRef.current;
@@ -354,8 +410,8 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
     octx.moveTo(from.x, from.y);
     octx.quadraticCurveTo(from.x, from.y, mx, my);
     octx.stroke();
-    renderDisplay();
-  }, [paintMode, brushSize]);
+    scheduleRender();
+  }, [paintMode, brushSize, scheduleRender]);
 
   // ====================================================
   //  SHAPE drawing — commit to offscreen
@@ -477,11 +533,11 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
     }
     prevSmoothedRef.current = smoothed;
 
-    // Throttled mask update
+    // Throttled mask update — use ref to avoid stale closure
     if (!updateTimerRef.current) {
       updateTimerRef.current = setTimeout(() => {
         updateTimerRef.current = null;
-        emitMaskUpdate();
+        emitMaskUpdateRef.current();
       }, 80);
     }
   }, [isDrawing, getCanvasPos, drawTool, dragStart, drawSegment, drawDot]);
@@ -518,7 +574,7 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
       clearTimeout(updateTimerRef.current);
       updateTimerRef.current = null;
     }
-    emitMaskUpdate();
+    emitMaskUpdateRef.current();
   }, [isDrawing, drawTool, dragStart, dragCurrent, paintMode, clearPreview]);
 
   const leaveCanvas = useCallback(() => {
@@ -528,9 +584,13 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
   }, [clearPreview]);
 
   // --- Polyline: click to add vertex ---
-  const clickPolyVertex = useCallback((e: React.MouseEvent) => {
+  const clickPolyVertex = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     if (drawTool !== 'polyline') return;
-    const pt = getCanvasPos(e.clientX, e.clientY);
+
+    const pos = extractEventPos(e);
+    if (!pos) return;
+
+    const pt = getCanvasPos(pos.cx, pos.cy);
     if (!pt) return;
 
     const pts = [...polyPoints, pt];
@@ -540,12 +600,12 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
       // Draw segment between last two points on offscreen canvas
       commitShapeLine(pts[pts.length - 2], pts[pts.length - 1]);
       renderDisplay();
-      emitMaskUpdate();
+      emitMaskUpdateRef.current();
     }
 
     setDragStart(pt);
     setDragCurrent(pt);
-  }, [drawTool, polyPoints, getCanvasPos]);
+  }, [drawTool, polyPoints, getCanvasPos, extractEventPos]);
 
   const finishPolyline = useCallback(() => {
     if (drawTool !== 'polyline' || polyPoints.length === 0) return;
@@ -578,29 +638,22 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
   }, [drawTool, finishPolyline]);
 
   // Update polyline preview (live preview line from last point to mouse)
-  const movePolyPreview = useCallback((e: React.MouseEvent) => {
+  const movePolyPreview = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     if (drawTool !== 'polyline' || polyPoints.length === 0) return;
-    const pt = getCanvasPos(e.clientX, e.clientY);
+
+    const pos = extractEventPos(e);
+    if (!pos) return;
+
+    const pt = getCanvasPos(pos.cx, pos.cy);
     if (!pt) return;
     setDragCurrent(pt);
     drawShapePreview(polyPoints[polyPoints.length - 1], pt);
-  }, [drawTool, polyPoints, getCanvasPos]);
+  }, [drawTool, polyPoints, getCanvasPos, extractEventPos]);
 
   // --- Canvas mouse event routing ---
   const onCanvasMouseDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     if (drawTool === 'polyline') {
-      if ('touches' in e && e.touches.length > 0) {
-        const touch = e.touches[0];
-        const mouseEvent = {
-          clientX: touch.clientX,
-          clientY: touch.clientY,
-          preventDefault: () => {},
-          stopPropagation: () => {}
-        } as React.MouseEvent;
-        clickPolyVertex(mouseEvent);
-      } else if (!('touches' in e)) {
-        clickPolyVertex(e as React.MouseEvent);
-      }
+      clickPolyVertex(e);
     } else {
       startDraw(e);
     }
@@ -608,18 +661,7 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
 
   const onCanvasMouseMove = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     if (drawTool === 'polyline' && polyPoints.length >= 1 && !isDrawing) {
-      if ('touches' in e && e.touches.length > 0) {
-        const touch = e.touches[0];
-        const mouseEvent = {
-          clientX: touch.clientX,
-          clientY: touch.clientY,
-          preventDefault: () => {},
-          stopPropagation: () => {}
-        } as React.MouseEvent;
-        movePolyPreview(mouseEvent);
-      } else if (!('touches' in e)) {
-        movePolyPreview(e as React.MouseEvent);
-      }
+      movePolyPreview(e);
     } else {
       moveDraw(e);
     }
@@ -627,19 +669,7 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
 
   // Handle touch events for cursor position updates
   const onCanvasTouchMove = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length > 0) {
-      const touch = e.touches[0];
-      const mouseEvent = {
-        clientX: touch.clientX,
-        clientY: touch.clientY,
-        preventDefault: () => {},
-        stopPropagation: () => {}
-      } as React.MouseEvent;
-      moveDraw({
-        ...mouseEvent,
-        touches: e.touches
-      } as unknown as React.TouchEvent);
-    }
+    moveDraw(e);
   }, [moveDraw]);
 
   const onCanvasMouseUp = useCallback(() => {
@@ -658,18 +688,32 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
   const emitMaskUpdate = useCallback(() => {
     const off = offscreenRef.current;
     if (!off) return;
-    const dataUrl = off.toDataURL('image/jpeg', 0.92);
+    const dataUrl = off.toDataURL('image/png');
     maskImageDataRef.current = off.getContext('2d')!.getImageData(0, 0, off.width, off.height);
     onMaskUpdate(dataUrl);
     
-    // Save to history
-    const newHistory = [...history.slice(0, historyIndex + 1), dataUrl];
-    if (newHistory.length > maxHistoryLength) {
-      newHistory.shift();
-    }
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  }, [history, historyIndex, onMaskUpdate]);
+    // Save to history using functional updater throughout to avoid stale closure
+    setHistoryIndex((prev) => {
+      const newIndex = prev + 1;
+      // Use a ref to pass the new index into setHistory below
+      historyIndexRef.current = newIndex;
+      return newIndex;
+    });
+    setHistory((prev) => {
+      const currentIdx = historyIndexRef.current;
+      const newHistory = [...prev.slice(0, currentIdx), dataUrl];
+      if (newHistory.length > maxHistoryLength) {
+        newHistory.shift();
+      }
+      return newHistory;
+    });
+  }, [onMaskUpdate]);
+
+  // Keep emitMaskUpdateRef in sync with latest emitMaskUpdate
+  emitMaskUpdateRef.current = emitMaskUpdate;
+
+  // Keep historyIndexRef in sync with historyIndex state
+  historyIndexRef.current = historyIndex;
 
   // --- Undo functionality ---
   const canUndo = historyIndex > 0;
@@ -687,7 +731,7 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
         ctx.clearRect(0, 0, offscreenRef.current!.width, offscreenRef.current!.height);
         ctx.drawImage(img, 0, 0);
         renderDisplay();
-        emitMaskUpdate();
+        emitMaskUpdateRef.current();
         setHistoryIndex(prevIndex);
       };
       img.src = prevState;
@@ -740,10 +784,24 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
     maskImg.onload = () => {
       octx.drawImage(maskImg, 0, 0);
       renderDisplay();
-      emitMaskUpdate();
+      emitMaskUpdateRef.current();
     };
     maskImg.src = maskImage;
   };
+
+  // ====================================================
+  //  CLEANUP
+  // ====================================================
+
+  // 组件卸载时取消 pending rAF
+  useEffect(() => {
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, []);
 
   // ====================================================
   //  KEYBOARD SHORTCUTS
@@ -964,8 +1022,16 @@ export const MaskEditor = forwardRef<{ handleSimplify: () => Promise<void> }, Ma
 
         {/* Interaction canvas (transparent, catches events) */}
         <canvas
-          width={loaded ? offscreenRef.current?.width ?? 0 : 0}
-          height={loaded ? offscreenRef.current?.height ?? 0 : 0}
+          ref={(canvas) => {
+            // 动态设置交互画布尺寸以匹配显示画布
+            if (canvas && displayCanvasRef.current && loaded) {
+              const displayCanvas = displayCanvasRef.current;
+              if (canvas.width !== displayCanvas.width || canvas.height !== displayCanvas.height) {
+                canvas.width = displayCanvas.width;
+                canvas.height = displayCanvas.height;
+              }
+            }
+          }}
           onMouseDown={onCanvasMouseDown}
           onMouseUp={onCanvasMouseUp}
           onMouseMove={onCanvasMouseMove}

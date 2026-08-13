@@ -4,7 +4,7 @@ import type { Step } from "@/app/store";
 const TOOLS: { key: Step; label: string; icon: any; hint: string }[] = [
   { key: "upload", label: "上传图片", icon: "upload", hint: "导入工具俯拍照片" },
   { key: "calibration", label: "纸张校准", icon: "scan", hint: "自动识别 A4 并校正透视" },
-  { key: "segmentation", label: "轮廓提取", icon: "crop", hint: "Fast+SAM 提取工具轮廓" },
+  { key: "segmentation", label: "轮廓提取", icon: "crop", hint: "自动提取工具轮廓" },
   { key: "editor", label: "矢量编辑", icon: "pencil", hint: "手动微调轮廓节点" },
   { key: "params", label: "参数配置", icon: "sliders", hint: "底板/腔体厚度与偏移" },
   { key: "export", label: "导出文件", icon: "download", hint: "导出 STL / SVG / 工程图" },

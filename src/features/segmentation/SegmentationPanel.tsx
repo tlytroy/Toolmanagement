@@ -10,7 +10,7 @@ interface SegmentationPanelProps {
   debugUrl: boolean;
   primitives: Primitive[];
   primitiveDebugUrl?: string;
-  processContourExtraction?: (file: File) => Promise<void>;
+  processContourExtraction?: () => Promise<void>;
   detectionFailed?: boolean;
   onManualDraw?: () => void;
   onReupload?: () => void;
@@ -38,17 +38,15 @@ export function SegmentationPanel({
       </div>
       
       <div className="text-sm text-zinc-400 mb-4">
-        基于 Fast+SAM 的混合检测算法，自动提取工具轮廓并进行基元化处理。
+        自动提取工具轮廓并进行基元化处理。
       </div>
       
       <Button 
         className="w-full" 
         onClick={() => {
-          // 使用传入的processContourExtraction函数
           if (processContourExtraction) {
-            processContourExtraction(new File([], ""));
+            processContourExtraction();
           } else {
-            // 否则使用原来的onExtract回调
             onExtract();
           }
         }}

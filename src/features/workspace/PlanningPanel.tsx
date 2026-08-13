@@ -42,7 +42,7 @@ interface PlanningPanelProps {
   detect: PaperDetectionResult | null;
   detectError: string | null;
   imgUrl: boolean;
-  processContourExtraction?: (file: File) => Promise<void>;
+  processContourExtraction?: () => Promise<void>;
   maskUrl?: string;
   onMaskUpdate?: (updatedMask: string) => void;
   simplifiedPrimitives: Primitive[];

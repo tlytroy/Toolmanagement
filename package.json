@@ -11,10 +11,6 @@
     "test:watch": "jest --watch"
   },
   "dependencies": {
-    "@techstark/opencv-js": "^5.0.0-release.1",
-    "fabric": "^7.4.0",
-    "minisam": "^0.2.0",
-    "onnxruntime-web": "^1.27.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "three": "^0.185.1",
