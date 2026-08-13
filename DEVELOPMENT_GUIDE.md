@@ -314,14 +314,20 @@ reference/
 ```json
 {
   "primitives": [{ "type": "line", "p0": {"x":0,"y":0}, "p1": {"x":10,"y":10} }, ...],
-  "params": {
-    "mode": "foam",
-    "thickness": 10.0,
-    "wall_angle": 90.0,
-    "base_height": 0.0,
-    "grid_size": 0,
-    "tolerance": 0.5
-  }
+  // Foam 模式参数
+  "mode": "foam",
+  "length_mm": 200,
+  "width_mm": 150,
+  "height_mm": 20,
+  "fillet_radius": 5,
+  // Gridfinity 模式参数（mode="gridfinity" 时使用）
+  "units_x": 3,
+  "units_y": 2,
+  "height_u": 3,
+  "has_magnet_holes": true,
+  // 通用参数
+  "embed_depth": 15,
+  "tool_offset": 1.0
 }
 ```
 
@@ -332,20 +338,33 @@ reference/
   "success": true,
   "stl_base64": "...", // Base64 编码的 ASCII STL 文件
   "summary": {
+    "mode": "foam",
     "vertices": 1234,
     "faces": 2468,
-    "volume": 12345.6,
-    "bounds": [10.0, 20.0, 15.0]
+    "volume_mm3": 12345.6,
+    "bounds": { "x": [0, 200], "y": [0, 150], "z": [-10, 10] },
+    // Foam 模式附加字段
+    "length_mm": 200,
+    "width_mm": 150,
+    "height_mm": 20,
+    "fillet_radius": 5
+    // Gridfinity 模式附加字段
+    // "units_x": 3,
+    // "units_y": 2,
+    // "height_u": 3
   }
 }
 ```
 
 **内部流程**（`cad_engine.py`）：
 
-1. **基元 → 多边形**：`_primitives_to_polygon()` 遍历 line/arc/polyline 基元，构造 shapely Polygon。arc 基元离散为 ≈20 个线段，polyline 直接取 points。可选 `tolerance` 参数控制 Douglas-Peucker 简化。
-2. **Foam 模式**（`mode="foam"`）：`_extrude_foam_insert()` 用 `trimesh.creation.extrude_polygon()` 将多边形挤压为实体。`wall_angle < 90°` 时，每层缩放 `tan(θ)` 产生斜壁效果。
-3. **Gridfinity 模式**（`mode="gridfinity"`）：`_extrude_gridfinity_base()` 先生成基座底板，再在顶部阵列凹槽（圆角矩形，`_make_rounded_box()` 用 shapely buffer 生成圆角矩形截面后挤压）。
-4. **输出**：`trimesh.Scene` 合并所有 mesh → `scene.export(file_type='stl')` → base64 编码返回。
+1. **参数解析**：`InsertParams.from_dict()` 构建参数模型 → `BoxParams`（Foam）或 `GridfinityParams`（Gridfinity）+ 通用 `embed_depth`/`tool_offset`
+2. **基底生成**：
+   - Foam 模式：`_make_rounded_box(length, width, height, fillet_radius)` — 用 shapely buffer 生成圆角矩形截面，trimesh.extrude_polygon 拉伸
+   - Gridfinity 模式：`_make_gridfinity_base()` — 圆角底板 + 底部裙边布尔减 + 可选磁吸孔（cylinder 布尔减）
+3. **工具槽布尔减**：`_extrude_tool_slot()` 将 primitives 转为 2D 多边形 → 缩放至基底尺寸并居中 → shapely Polygon → extrude_polygon 拉伸 → Manifold 布尔减（若可用）或 trimesh.difference
+4. **多边形偏移**：`_offset_polygon()` 沿法线方向移动顶点实现 tool_offset 容差
+5. **输出**：`base.export(file_type='stl')` → base64 编码返回 + 统计摘要
 
 ---
 
@@ -404,9 +423,10 @@ upload → calibration → segmentation → editor → params → export
 
 #### Step 5: params — 参数配置
 
-- `ParamsPanel.tsx`：两种模式选择：
-  - **Foam 模式**（嵌件）：底板厚度（5-30mm）、壁面角度（30-90°）
-  - **Gridfinity 模式**（基座）：底板厚度（5-30mm）、基座高度（5-20mm）、网格大小（1-5）
+- `ParamsPanel.tsx`：两种模式选择 + 滑块参数 + 「生成 3D 模型」按钮
+  - **Foam 模式**（嵌件）：底板长度（20-500mm）、底板宽度（20-500mm）、底板高度（5-200mm）、圆角半径（0-50mm）
+  - **Gridfinity 模式**（基座）：X 网格数（1-10）、Y 网格数（1-10）、高度单位（1-10u，1u=7mm + 5mm 基座）、磁吸孔开关
+  - **通用参数**：工具嵌入深度（1-50mm）、轮廓偏移（-5~10mm，负值缩小轮廓）
   - 点击「生成 3D 模型」→ `POST /generate-cad` → 更新 store 的 `cadResult` → 自动跳 `export`
 
 #### Step 6: export — 导出文件
@@ -428,16 +448,51 @@ upload → calibration → segmentation → editor → params → export
 
 ```typescript
 // src/app/store.ts
-step: Step              // 当前步骤
-imageUrl: string        // 原始上传图片
-calibratedImageUrl      // 校正后图片（较少使用，Workspace 本地管理 warpedUrl）
-contours: any[]         // 原始轮廓（较少使用）
-samMask: any            // SAM 掩膜（已废弃）
+step: Step              // 当前步骤 ("upload"|"calibration"|"segmentation"|"editor"|"params"|"export"|"diagnose")
+imageUrl: string | null // 原始上传图片
 primitives: Primitive[] // 基元化结果
 
-// CAD 相关（2026-08-07 新增）
-cadParams: CADParams    // { mode, thickness, wall_angle, base_height, grid_size, tolerance }
-cadResult: CADResult    // { stl_base64, summary: { vertices, faces, volume, bounds } }
+// CAD 参数（Foam / Gridfinity 双模式）
+cadParams: CADParams = {
+  mode: "foam" | "gridfinity",
+  // Foam 参数
+  length_mm: 200,         // 底板长度 (mm)
+  width_mm: 150,           // 底板宽度 (mm)
+  height_mm: 20,           // 底板高度 (mm)
+  fillet_radius: 5,        // 底板圆角半径 (mm)
+  // Gridfinity 参数
+  units_x: 3,              // X 方向网格数
+  units_y: 2,              // Y 方向网格数
+  height_u: 3,             // Gridfinity 高度单位 (1u = 7mm)
+  has_magnet_holes: true,  // 是否生成磁吸孔
+  // 通用参数
+  embed_depth: 15,         // 工具嵌入深度 (mm)
+  tool_offset: 1.0,        // 工具轮廓外扩容差 (mm)
+}
+
+// CAD 结果
+cadResult: CADResult = {
+  stl_base64: string | null,     // Base64 编码的 STL 文件
+  summary: {                     // 模型摘要
+    vertices: number,             //   顶点数
+    faces: number,                //   三角面数
+    volume_mm3: number,           //   体积 (mm³)
+    bounds: {                     //   包围盒范围
+      x: [min, max],
+      y: [min, max],
+      z: [min, max],
+    },
+  } | null,
+}
+
+// Actions
+setStep(step)           // 切换步骤
+setImageUrl(url)        // 设置图片
+setPrimitives(p)        // 设置基元
+setCADParams(p)         // 部分更新 CAD 参数
+resetCADParams()        // 重置为默认值
+setCADResult(r)         // 设置 CAD 结果
+setIsGenerating(v)      // 生成中状态
 ```
 
 ---
@@ -503,54 +558,83 @@ cadResult: CADResult    // { stl_base64, summary: { vertices, faces, volume, bou
 
 ### 6.2 依赖
 
-- `trimesh`：三角网格构建、布尔运算、STL 导出
-- `manifold3d`：高质量布尔运算后端（trimesh 可选）
+- `trimesh`：三角网格构建、STL 导出
+- `manifold3d`：高质量布尔运算后端（可选，回退到 trimesh.difference）
 - `shapely`：2D 多边形构造（圆角矩形、缓冲、简化）
 - `numpy`：数值运算
 
-### 6.3 管线
+### 6.3 参数模型
 
 ```
-primitives（line/arc/polyline 基元列表）
-  │
-  ├─ _primitives_to_polygon()
-  │    line → 线段端点加入点集
-  │    arc  → 圆心角离散 ≈20 段
-  │    polyline → 直接取 points
-  │    shapely.Polygon() 构造 → 可选 buffer(tolerance) 简化
-  │
-  ├─ [mode="foam"]
-  │    _extrude_foam_insert()
-  │      trimesh.creation.extrude_polygon(polygon, height=thickness)
-  │      wall_angle < 90° → 多层缩放挤压产生斜壁
-  │
-  ├─ [mode="gridfinity"]
-  │    _extrude_gridfinity_base()
-  │      基座底板（多边形挤压 base_height）
-  │      + grid_size × grid_size 个凹槽（_make_rounded_box 圆角矩形）
-  │      凹槽深度 = thickness - base_height
-  │
-  └─ trimesh.Scene(meshes) → scene.export(file_type='stl')
-       → base64 编码返回
+InsertParams（总配置）
+├── mode: "foam" | "gridfinity"
+├── foam: BoxParams              # Foam 模式参数
+│   ├── length_mm: 200           #   底板长度
+│   ├── width_mm: 150            #   底板宽度
+│   ├── height_mm: 20            #   底板高度
+│   ├── fillet_radius: 5         #   圆角半径
+│   └── wall_thickness: 2        #   壁厚（预留，暂未使用）
+├── gridfinity: GridfinityParams # Gridfinity 模式参数
+│   ├── units_x: 3               #   X 方向网格数
+│   ├── units_y: 2               #   Y 方向网格数
+│   ├── height_u: 3              #   高度单位 (1u = 7mm + 5mm 基座)
+│   ├── has_magnet_holes: true   #   是否生成磁吸孔
+│   ├── size_x (= units_x × 42mm)
+│   ├── size_y (= units_y × 42mm)
+│   └── height_mm (= height_u × 7 + 5)
+├── primitives: List[Dict]       # 工具轮廓基元列表
+├── tool_offset: 1.0             # 轮廓外扩容差 (mm)
+└── embed_depth: 15              # 工具嵌入深度 (mm)
 ```
 
-### 6.4 关键参数
+### 6.4 管线
 
-| 参数        | 默认值 | 范围            | 说明                              |
-| ----------- | ------ | --------------- | --------------------------------- |
-| mode        | "foam" | foam/gridfinity | 嵌件模式 / 基座模式               |
-| thickness   | 10.0   | 5-30 mm         | 底板总厚度                        |
-| wall_angle  | 90.0   | 30-90°          | 壁面角度（90°=直壁）              |
-| base_height | 0.0    | 0-20 mm         | Gridfinity 基座高度               |
-| grid_size   | 0      | 1-5             | Gridfinity 网格数（0=自动）       |
-| tolerance   | 0.5    | 0.1-2.0         | 多边形简化容差（Douglas-Peucker） |
+```
+generate_insert(InsertParams)
+  │
+  ├─ 1. 基底生成
+  │   ├─ [foam]  _make_rounded_box(l, w, h, r)
+  │   │    shapely box → buffer(-r) → buffer(r) → extrude_polygon
+  │   │
+  │   └─ [gridfinity] _make_gridfinity_base(params)
+  │        _make_rounded_box(sx, sy, sz, corner_r=3)
+  │        → 底部裙边布尔减 (内缩 1.5mm 方盒)
+  │        → [has_magnet_holes] 磁吸孔阵列 (cylinder × units_x×units_y)
+  │
+  ├─ 2. 工具槽布尔减
+  │    _extrude_tool_slot(primitives, embed_depth, tool_offset, base_sx, base_sy)
+  │      _primitives_to_2d_polygon()    # 基元 → N×2 numpy array
+  │        line  → p0, p1 加入点集
+  │        arc   → points 加入点集
+  │        polyline → points 加入点集
+  │      _offset_polygon(offset)        # 沿法线方向偏移 tool_offset
+  │      缩放至基底尺寸 (840×1188 → base_sx×base_sy)
+  │      shapely.Polygon → extrude_polygon(embed_depth+1)
+  │      [HAS_MANIFOLD] Manifold 布尔减
+  │      [else] trimesh.difference
+  │
+  └─ 3. 导出
+       base.export(file_type='stl') → base64 编码 → 统计摘要
+```
 
-### 6.5 已知局限
+### 6.5 关键常量
+
+| 常量                      | 值   | 说明                         |
+| ------------------------- | ---- | ---------------------------- |
+| GRIDFINITY_PITCH          | 42.0 | Gridfinity 标准网格间距 (mm) |
+| GRIDFINITY_HOLE_DIA       | 6.5  | 磁吸孔直径 (mm)              |
+| GRIDFINITY_HOLE_DEPTH     | 2.5  | 磁吸孔深度 (mm)              |
+| GRIDFINITY_CORNER_R       | 3.0  | Gridfinity 底板圆角 (mm)     |
+| GRIDFINITY_BASE_THICKNESS | 5.0  | Gridfinity 底板基础厚度 (mm) |
+| GRIDFINITY_SKIRT          | 1.5  | Gridfinity 底部裙边高度 (mm) |
+| GRIDFINITY_WALL           | 1.2  | Gridfinity 隔板壁厚 (mm)     |
+
+### 6.6 已知局限
 
 - **自交多边形**：基元组合可能产生自交轮廓，shapely 的 `buffer(0)` 可修复但可能改变形状
-- **复杂布尔运算**：Gridfinity 凹槽使用差集，对窄壁（<2mm）可能产生退化三角面
+- **复杂布尔运算**：Gridfinity 磁吸孔使用 Manifold 差集，对窄壁（<2mm）可能产生退化三角面
 - **无 STEP 导出**：当前仅支持 STL（ASCII），trimesh 可扩展 STEP 但需额外依赖
-- **无 GUI 预览旋转**：前端 Three.js 预览支持 OrbitControls，但后端不生成预览图
+- **工具槽居中**：当前假设校正图尺寸 840×1188px 并缩放至基底尺寸，未支持手动定位
 
 ---
 
@@ -739,6 +823,19 @@ npm run dev
 - **修复注释截断**：`# 确保` → `# 确保是BGR格式`
 - **参数自适应**：`max_radius = img_diag * 0.03`，`curv_thresh = clamp(0.02, 0.05, 50/img_diag)`
 - **不涉及**：A4 纸张检测（`detect_paper_corners` / `perspective_warp`）、工具轮廓提取（`extract_tool_contours_v26` / `convert_contour_to_primitives`）未修改
+
+### 2026-08-13 文档更新 + ParamsPanel 参数范围修正
+
+**文件**：`README.md` + `DEVELOPMENT_GUIDE.md`
+
+**改动**：
+
+- **README.md 更新**：新增「CAD 模型生成」核心功能说明，清晰描述 Foam 模式（自定义长宽高 + 圆角）和 Gridfinity 模式（42mm 标准网格 + 磁吸孔）的能力
+- **DEVELOPMENT_GUIDE.md 参数范围修正**：§4.2 Step 5 params 中的参数范围更新为与实际代码一致：
+  - Foam 模式：长度 20-500mm、宽度 20-500mm、高度 5-200mm、圆角 0-50mm
+  - Gridfinity 模式：网格数 1-10、高度 1-10u
+  - 通用参数：嵌入深度 1-50mm、轮廓偏移 -5~10mm
+- **验证**：`cd python_backend && python3 -c "from cad_engine import *; r = generate_insert(InsertParams(mode='foam', foam=BoxParams(200,150,20,5), primitives=[{'type':'polyline','points':[{'x':200,'y':200},{'x':600,'y':200},{'x':600,'y':800},{'x':200,'y':800},{'x':200,'y':200}]}], embed_depth=10)); print(f'Foam test: success={r.get(\"success\")}')"` → `Foam test: success=True`
 
 ### 2026-08-07 handleUpdateContour 语义修复
 

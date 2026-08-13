@@ -4,7 +4,7 @@
 
 OpenCV.js 前端管线已全部移除。当前架构为 **Python FastAPI 后端 + React 前端**。
 
-所有图像处理（纸张检测、透视校正、轮廓提取、基元化）均在 Python 端完成，前端仅负责文件上传、API 调用、结果显示和手动编辑。
+所有图像处理（纸张检测、透视校正、轮廓提取、基元化）均在 Python 端完成，前端仅负责文件上传、API 调用、结果显示和手动编辑。CAD 建模（trimesh + manifold3d）也在 Python 后端完成。
 
 ## 架构
 
@@ -12,17 +12,19 @@ OpenCV.js 前端管线已全部移除。当前架构为 **Python FastAPI 后端 
 ┌──────────────────────────────────────────────┐
 │              浏览器 (React + TS)               │
 │  Upload → Calibration → Segmentation → Editor │
+│  → Params → Export (3D 预览 + STL 下载)        │
 │                    ↓ API 调用                   │
 ├──────────────────────────────────────────────┤
 │        Python Backend (FastAPI :8001)          │
 │  /detect-paper  /extract-contours               │
 │  /extract-tool-mask  /update-contour            │
-│  /simplify-contours                             │
+│  /simplify-contours  /generate-cad              │
 │                    ↓                            │
 │         算法模块 (纯 OpenCV, 无 SAM)            │
 │  latest_paper_detection.py                     │
 │  sam_tool_contour.py (v26 轮廓)                │
 │  main.py (内联 curvature-based 抽稀基元化)     │
+│  cad_engine.py (trimesh + manifold3d CAD)      │
 └──────────────────────────────────────────────┘
 ```
 
@@ -70,6 +72,18 @@ OpenCV.js 前端管线已全部移除。当前架构为 **Python FastAPI 后端 
 - **功能**：从蒙版中提取原始轮廓（不抽稀、不基元化），返回 polyline 供前端快速预览
 - **用途**：用户反复编辑蒙版时实时查看边界变化
 
+### 5. CAD 建模引擎（Python 后端）
+
+- **文件**：`python_backend/cad_engine.py`
+- **端点**：`POST /generate-cad`
+- **依赖**：trimesh + manifold3d + shapely
+- **功能**：
+  - 基元（line/arc/polyline）→ 2D 多边形 → 3D 拉伸
+  - Foam 模式：自定义长宽高 + 圆角的方盒嵌件
+  - Gridfinity 模式：42mm 标准网格基底（带磁吸孔）
+  - 工具槽布尔减：轮廓偏移 → 拉伸 → 从基底减去
+- **返回**：STL base64 + 模型摘要（顶点/面/体积/范围）
+
 ## 启动方式
 
 ```bash
@@ -82,17 +96,19 @@ npm run dev
 
 ## API 端点一览
 
-| 端点 | 方法 | 输入 | 输出 |
-|------|------|------|------|
-| `/detect-paper` | POST | 图片文件 (multipart) | corners, warped_image, confidence, skew |
-| `/extract-contours` | POST | 图片文件 (multipart) | primitives, debug_image, summary |
-| `/extract-tool-mask` | POST | 图片文件 (multipart) | mask_image |
-| `/update-contour` | POST | mask_image (base64 JSON) | primitives (原始 polyline) |
-| `/simplify-contours` | POST | mask_image (base64 JSON) | primitives (line/arc/polyline), summary |
+| 端点                 | 方法 | 输入                       | 输出                                               |
+| -------------------- | ---- | -------------------------- | -------------------------------------------------- |
+| `/detect-paper`      | POST | 图片文件 (multipart)       | corners, warped_image, confidence, skew            |
+| `/extract-contours`  | POST | 图片文件 (multipart)       | primitives, debug_image, summary                   |
+| `/extract-tool-mask` | POST | 图片文件 (multipart)       | mask_image                                         |
+| `/update-contour`    | POST | mask_image (base64 JSON)   | primitives (原始 polyline)                         |
+| `/simplify-contours` | POST | mask_image (base64 JSON)   | primitives (line/arc/polyline), summary            |
+| `/generate-cad`      | POST | primitives + params (JSON) | stl_base64, summary (vertices/faces/volume/bounds) |
 
 ## 参考资源
 
 - `python_backend/main.py` — FastAPI 服务主入口
+- `python_backend/cad_engine.py` — CAD 建模引擎
 - `python_backend/latest_paper_detection.py` — 纸张检测代理模块
 - `python_backend/sam_tool_contour.py` — v26 工具轮廓提取
 - `reference/pkg_paper_detection/robust_paper_detector.py` — 纸张检测算法参考
