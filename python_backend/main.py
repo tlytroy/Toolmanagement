@@ -469,7 +469,7 @@ async def update_contour(mask_data: dict):
 
 # ── CAD 3D 生成端点 ──────────────────────────────────
 
-from cad_engine import generate_stl
+from cad_engine import generate_stl, _auto_detect_finger_slots
 
 class GenerateCADRequest(BaseModel):
     """CAD 生成请求"""
@@ -479,6 +479,7 @@ class GenerateCADRequest(BaseModel):
     primitives: List[Dict[str, Any]] = []
     tool_offset: float = 1.0
     embed_depth: float = 15.0
+    finger_slots: List[Dict[str, Any]] = []
 
 
 @app.post("/generate-cad", response_model=Dict[str, Any])
@@ -515,9 +516,85 @@ async def generate_cad(req: GenerateCADRequest):
         "primitives": req.primitives,
         "tool_offset": req.tool_offset,
         "embed_depth": req.embed_depth,
+        "finger_slots": req.finger_slots,
     }
     result = generate_stl(params)
     return result
+
+
+class AutoFingerSlotsRequest(BaseModel):
+    """自动手指槽检测请求"""
+    mode: str = "foam"
+    foam: Dict[str, Any] = {}
+    gridfinity: Dict[str, Any] = {}
+    primitives: List[Dict[str, Any]] = []
+    tool_offset: float = 1.0
+    slot_width: float = 12.0
+    slot_depth: float = 10.0
+    slot_length: float = 25.0
+
+
+@app.post("/auto-finger-slots", response_model=Dict[str, Any])
+async def auto_finger_slots(req: AutoFingerSlotsRequest):
+    """
+    根据工具轮廓自动检测并生成手指槽位置。
+
+    使用 PCA 分析工具轮廓的主方向，在长轴两端自动放置半胶囊形手指槽，
+    使手指槽始终位于工具轮廓的合适位置（轮廓外侧向内侧穿入）。
+
+    请求体示例:
+    ```json
+    {
+      "mode": "foam",
+      "foam": {"length_mm": 200, "width_mm": 150},
+      "primitives": [...],
+      "tool_offset": 1.0,
+      "slot_width": 12,
+      "slot_depth": 10,
+      "slot_length": 25
+    }
+    ```
+    """
+    try:
+        # 确定基底尺寸
+        if req.mode == "gridfinity":
+            from cad_engine import GridfinityParams
+            gf = GridfinityParams(
+                units_x=req.gridfinity.get("units_x", 3),
+                units_y=req.gridfinity.get("units_y", 2),
+            )
+            base_size_x = gf.size_x
+            base_size_y = gf.size_y
+            base_height = gf.height_mm
+        else:
+            base_size_x = req.foam.get("length_mm", 200.0)
+            base_size_y = req.foam.get("width_mm", 150.0)
+            base_height = req.foam.get("height_mm", 20.0)
+
+        # 调用 cad_engine 中的自动检测函数
+        slots = _auto_detect_finger_slots(
+            req.primitives,
+            base_size_x,
+            base_size_y,
+            base_height,
+            slot_width=req.slot_width,
+            slot_depth=req.slot_depth,
+            slot_length=req.slot_length,
+        )
+
+        return {
+            "success": True,
+            "finger_slots": slots,
+        }
+    except Exception as e:
+        print(f"自动手指槽检测失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e),
+            "finger_slots": [],
+        }
 
 
 if __name__ == "__main__":

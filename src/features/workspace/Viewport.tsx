@@ -1,9 +1,9 @@
 import { Icon } from "@/components/ui/icons";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
-import { useStore } from "@/app/store";
+import { useStore, type FingerSlot } from "@/app/store";
 
 interface ViewportProps {
   imgUrl?: string;
@@ -174,6 +174,99 @@ function CADPreview({ stlBase64 }: { stlBase64: string }) {
   );
 }
 
+/**
+ * Draw finger slot overlays on a temporary canvas that sits on top of the image.
+ */
+function FingerSlotOverlay({
+  slots,
+  imageRect,
+  foamWidth,
+  foamHeight,
+  imageWidth,
+  imageHeight,
+}: {
+  slots: FingerSlot[];
+  imageRect: { x: number; y: number; width: number; height: number } | null;
+  foamWidth: number;
+  foamHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !imageRect || slots.length === 0) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Match the parent image's displayed size
+    canvas.style.width = `${imageRect.width}px`;
+    canvas.style.height = `${imageRect.height}px`;
+    canvas.width = imageWidth;
+    canvas.height = imageHeight;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Scale from mm to pixel coordinates
+    // The foam block maps to the image dimensions
+    const scaleX = imageWidth / foamWidth;
+    const scaleY = imageHeight / foamHeight;
+
+    slots.forEach((slot) => {
+      const cx = slot.x * scaleX + imageWidth / 2;
+      const cy = slot.y * scaleY + imageHeight / 2;
+      const halfLen = (slot.length / 2) * scaleX;
+      const halfWid = (slot.width / 2) * scaleX;
+      const angleRad = (slot.rotation * Math.PI) / 180;
+
+      // Draw the slot as a filled capsule shape
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angleRad);
+
+      // Capsule body (rectangle with rounded ends)
+      ctx.beginPath();
+      ctx.moveTo(-halfLen, -halfWid);
+      ctx.lineTo(halfLen, -halfWid);
+      ctx.arc(halfLen, 0, halfWid, -Math.PI / 2, Math.PI / 2);
+      ctx.lineTo(-halfLen, halfWid);
+      ctx.arc(-halfLen, 0, halfWid, Math.PI / 2, -Math.PI / 2);
+      ctx.closePath();
+
+      // Fill with semi-transparent color
+      ctx.fillStyle = "rgba(59, 130, 246, 0.25)";
+      ctx.fill();
+      ctx.strokeStyle = "#3b82f6";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Center line
+      ctx.beginPath();
+      ctx.moveTo(-halfLen, 0);
+      ctx.lineTo(halfLen, 0);
+      ctx.strokeStyle = "#60a5fa";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.restore();
+    });
+  }, [slots, imageRect, foamWidth, foamHeight, imageWidth, imageHeight]);
+
+  if (slots.length === 0) return null;
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 max-w-full max-h-[78vh] rounded-xl pointer-events-none"
+      style={{ display: "block" }}
+    />
+  );
+}
+
 export function Viewport({
   imgUrl,
   warpedUrl,
@@ -192,7 +285,39 @@ export function Viewport({
   step,
   primitives,
 }: ViewportProps) {
-  const { cadResult } = useStore();
+  const { cadResult, cadParams, setFingerSlots } = useStore();
+  const [drawingMode, setDrawingMode] = useState(false);
+  const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
+  const [drawEnd, setDrawEnd] = useState<{ x: number; y: number } | null>(null);
+  const [imageRect, setImageRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  const isParamsMode = step === "params";
+  const isManualSlotMode = isParamsMode && cadParams.finger_slot_enabled && !cadParams.finger_slot_auto;
+
+  // Track the displayed image's bounding rect for coordinate mapping
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const updateImageRect = useCallback(() => {
+    const img = isParamsMode
+      ? document.querySelector<HTMLImageElement>('#params-img')
+      : document.querySelector<HTMLImageElement>('#editor-warp-img');
+    if (img) {
+      imgRef.current = img;
+      const rect = img.getBoundingClientRect();
+      setImageRect({
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      });
+    }
+  }, [isParamsMode]);
+
+  useEffect(() => {
+    updateImageRect();
+    const onResize = () => updateImageRect();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [updateImageRect, warpedUrl, imgUrl, step]);
 
   // Draw contour overlay on editor canvas
   useEffect(() => {
@@ -276,6 +401,138 @@ export function Viewport({
     requestAnimationFrame(setupAndDraw);
   }, [primitives, step, warpedUrl]);
 
+  // ── Finger slot drawing handlers ──
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isManualSlotMode || !drawingMode || !imgRef.current || !imageRect) return;
+
+      const rect = imgRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      // Convert to image pixel coordinates
+      const imgX = (x / rect.width) * imgRef.current.naturalWidth;
+      const imgY = (y / rect.height) * imgRef.current.naturalHeight;
+
+      setDrawStart({ x: imgX, y: imgY });
+      setDrawEnd(null);
+    },
+    [isManualSlotMode, drawingMode, imageRect]
+  );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!drawStart || !drawingMode || !imgRef.current) return;
+
+      const rect = imgRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const imgX = (x / rect.width) * imgRef.current.naturalWidth;
+      const imgY = (y / rect.height) * imgRef.current.naturalHeight;
+
+      setDrawEnd({ x: imgX, y: imgY });
+    },
+    [drawStart, drawingMode]
+  );
+
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent) => {
+      if (!drawStart || !drawingMode || !imgRef.current) return;
+
+      const rect = imgRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const imgX = (x / rect.width) * imgRef.current.naturalWidth;
+      const imgY = (y / rect.height) * imgRef.current.naturalHeight;
+
+      // Calculate line vector
+      const dx = imgX - drawStart.x;
+      const dy = imgY - drawStart.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Only create slot if line is long enough (min 20px)
+      if (dist >= 20) {
+        // Convert image coords to mm (relative to foam center)
+        const foamW = cadParams.mode === "foam" ? cadParams.length_mm : cadParams.units_x * 42;
+        const foamH = cadParams.mode === "foam" ? cadParams.width_mm : cadParams.units_y * 42;
+        const scaleX = foamW / imgRef.current.naturalWidth;
+        const scaleY = foamH / imgRef.current.naturalHeight;
+
+        const midX = (drawStart.x + imgX) / 2;
+        const midY = (drawStart.y + imgY) / 2;
+
+        // Center of image → center of foam
+        const mmX = (midX - imgRef.current.naturalWidth / 2) * scaleX;
+        const mmY = (midY - imgRef.current.naturalHeight / 2) * scaleY;
+
+        // Length and rotation
+        const lenMm = dist * scaleX;
+        const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+        const newSlot: FingerSlot = {
+          id: `drawn_slot_${Date.now()}`,
+          x: mmX,
+          y: mmY,
+          length: Math.round(lenMm * 10) / 10,
+          width: cadParams.finger_slot_width,
+          depth: cadParams.finger_slot_depth,
+          rotation: angleDeg,
+        };
+
+        setFingerSlots([...cadParams.finger_slots, newSlot]);
+      }
+
+      setDrawStart(null);
+      setDrawEnd(null);
+    },
+    [drawStart, drawingMode, cadParams, setFingerSlots]
+  );
+
+  // Draw the in-progress line on a temporary canvas
+  const drawLineCanvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = drawLineCanvasRef.current;
+    if (!canvas || !imgRef.current) return;
+
+    const img = imgRef.current;
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.style.width = img.clientWidth + "px";
+    canvas.style.height = img.clientHeight + "px";
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (drawStart && drawEnd) {
+      ctx.beginPath();
+      ctx.moveTo(drawStart.x, drawStart.y);
+      ctx.lineTo(drawEnd.x, drawEnd.y);
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.setLineDash([8, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw endpoints
+      ctx.fillStyle = "#f59e0b";
+      ctx.beginPath();
+      ctx.arc(drawStart.x, drawStart.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(drawEnd.x, drawEnd.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [drawStart, drawEnd]);
+
+  // Delete a finger slot
+  const handleDeleteSlot = useCallback(
+    (slotId: string) => {
+      setFingerSlots(cadParams.finger_slots.filter((s) => s.id !== slotId));
+    },
+    [cadParams.finger_slots, setFingerSlots]
+  );
+
   // Export mode: 3D preview
   if (step === "export" && cadResult.stl_base64) {
     return (
@@ -288,6 +545,9 @@ export function Viewport({
       </main>
     );
   }
+
+  // Determine which image to show in params mode
+  const paramsImgUrl = isParamsMode ? (warpedUrl || imgUrl) : undefined;
 
   return (
     <main
@@ -340,6 +600,74 @@ export function Viewport({
             />
           </div>
         </div>
+      ) : isParamsMode ? (
+        <div className="min-h-full flex items-center justify-center p-8">
+          <div
+            className="relative"
+            style={{
+              transform: `scale(${zoom})`,
+              transformOrigin: "center",
+              transition: "transform 0.15s ease-out",
+            }}
+          >
+            {(warpedUrl || imgUrl) && (
+              <img
+                ref={imgRef}
+                src={paramsImgUrl}
+                alt="工具图"
+                className="max-w-full max-h-[78vh] rounded-xl shadow-2xl ring-1 ring-white/10"
+                id="params-img"
+                draggable={false}
+                onLoad={updateImageRect}
+              />
+            )}
+            {/* Draw in-progress line */}
+            <canvas
+              ref={drawLineCanvasRef}
+              className="absolute inset-0 max-w-full max-h-[78vh] rounded-xl pointer-events-none"
+              style={{ display: drawStart ? "block" : "none" }}
+            />
+            {/* Draw existing finger slot overlays */}
+            <FingerSlotOverlay
+              slots={cadParams.finger_slots}
+              imageRect={imageRect}
+              foamWidth={cadParams.mode === "foam" ? cadParams.length_mm : cadParams.units_x * 42}
+              foamHeight={cadParams.mode === "foam" ? cadParams.width_mm : cadParams.units_y * 42}
+              imageWidth={imgRef.current?.naturalWidth ?? 0}
+              imageHeight={imgRef.current?.naturalHeight ?? 0}
+            />
+            {/* Drawing mode instruction overlay */}
+            {drawingMode && (
+              <div className="absolute top-3 left-3 glass-bar rounded-lg px-3 py-1.5 text-xs text-amber-300 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                在工具图上点击并拖动，画一条线定义手指槽位置
+              </div>
+            )}
+            {/* Slot list overlay */}
+            {isManualSlotMode && cadParams.finger_slots.length > 0 && (
+              <div className="absolute top-3 right-3 glass-panel rounded-xl p-2 max-w-[200px] space-y-1">
+                <p className="text-[10px] text-zinc-400 font-medium px-1">手指槽 ({cadParams.finger_slots.length})</p>
+                {cadParams.finger_slots.map((slot) => (
+                  <div
+                    key={slot.id}
+                    className="flex items-center gap-1.5 text-[10px] text-zinc-300 bg-canvas-800/80 rounded-lg px-2 py-1"
+                  >
+                    <span className="flex-1 truncate">
+                      ({slot.x.toFixed(0)}, {slot.y.toFixed(0)}) {slot.length.toFixed(0)}mm
+                    </span>
+                    <button
+                      onClick={() => handleDeleteSlot(slot.id)}
+                      className="text-red-400 hover:text-red-300 transition-colors flex-shrink-0"
+                      title="删除此手指槽"
+                    >
+                      <Icon name="alert" size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       ) : (
         <div className="min-h-full flex items-center justify-center p-8">
           <div
@@ -383,7 +711,15 @@ export function Viewport({
                   : "bg-brand-400"
             }`}
           />
-          {stage === 0 ? "已导入照片" : stage === 1 ? "已识别纸张 · 待校正" : "轮廓已提取"}
+          {isParamsMode
+            ? "参数配置"
+            : stage === 0
+              ? "已导入照片"
+              : stage === 1
+                ? "已识别纸张 · 待校正"
+                : isManualSlotMode
+                  ? "轮廓已提取 · 划线定义手指槽"
+                  : "轮廓已提取"}
           {(detecting || extracting) && (
             <Icon name="loader" size={13} className="animate-spin text-brand-300" />
           )}
@@ -392,9 +728,47 @@ export function Viewport({
 
       {hasImage && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 glass-bar rounded-full px-2 py-1.5 flex items-center gap-1 text-zinc-300">
-          <ViewportToolBtn icon="pointer" active title="选择" />
-          <ViewportToolBtn icon="image" title="平移" />
-          <div className="w-px h-5 bg-canvas-600 mx-1" />
+          {isManualSlotMode ? (
+            <>
+              <ViewportToolBtn
+                icon="pencil"
+                title="划线定义手指槽"
+                active={drawingMode}
+                onClick={() => {
+                  setDrawingMode(!drawingMode);
+                  setDrawStart(null);
+                  setDrawEnd(null);
+                }}
+              />
+              <ViewportToolBtn
+                icon="pointer"
+                title="选择/查看"
+                active={!drawingMode}
+                onClick={() => {
+                  setDrawingMode(false);
+                  setDrawStart(null);
+                  setDrawEnd(null);
+                }}
+              />
+              <div className="w-px h-5 bg-canvas-600 mx-1" />
+              {cadParams.finger_slots.length > 0 && (
+                <button
+                  onClick={() => setFingerSlots([])}
+                  className="px-2 py-1 text-[10px] text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg transition-colors"
+                  title="清除所有手指槽"
+                >
+                  清除
+                </button>
+              )}
+              <div className="w-px h-5 bg-canvas-600 mx-1" />
+            </>
+          ) : !isParamsMode && (
+            <>
+              <ViewportToolBtn icon="pointer" active title="选择" />
+              <ViewportToolBtn icon="image" title="平移" />
+              <div className="w-px h-5 bg-canvas-600 mx-1" />
+            </>
+          )}
           <ViewportToolBtn icon="zoomOut" title="缩小" onClick={onZoomOut} />
           <span className="text-xs tabular-nums w-10 text-center">{Math.round(zoom * 100)}%</span>
           <ViewportToolBtn icon="zoomIn" title="放大" onClick={onZoomIn} />
@@ -404,7 +778,7 @@ export function Viewport({
         </div>
       )}
 
-      {hasImage && step !== "export" && (
+      {hasImage && step !== "export" && step !== "params" && (
         <div className="absolute bottom-4 left-4 glass-bar rounded-xl px-3 py-2 flex items-center gap-2 text-xs">
           <Icon name="box" size={15} className="text-zinc-400" />
           <div className="leading-tight">
@@ -412,6 +786,23 @@ export function Viewport({
             <p className="text-zinc-500 text-[11px]">生成模型后在此预览</p>
           </div>
         </div>
+      )}
+
+      {/* Mouse event overlay for drawing */}
+      {isManualSlotMode && drawingMode && (
+        <div
+          className="absolute inset-0 z-20"
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={() => {
+            if (drawStart) {
+              setDrawStart(null);
+              setDrawEnd(null);
+            }
+          }}
+          style={{ cursor: "crosshair" }}
+        />
       )}
     </main>
   );

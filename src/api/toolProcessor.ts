@@ -174,6 +174,7 @@ export const generateCAD = async (
       primitives,
       embed_depth: params.embed_depth,
       tool_offset: params.tool_offset,
+      finger_slots: (params as any).finger_slots || [],
     };
 
     if (params.mode === "foam") {
@@ -182,6 +183,9 @@ export const generateCAD = async (
         width_mm: params.width_mm,
         height_mm: params.height_mm,
         fillet_radius: params.fillet_radius,
+        stackable: params.stackable,
+        stack_lip_width: params.stack_lip_width,
+        stack_lip_height: params.stack_lip_height,
       };
     } else {
       body.gridfinity = {
@@ -269,6 +273,55 @@ export const updateContour = async (maskData: {
     return {
       success: false,
       error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+};
+
+/**
+ * 自动检测手指槽位置
+ * 基于工具轮廓的 PCA 主方向，在长轴两端放置半胶囊形手指槽
+ * @param params 包含基底尺寸、工具轮廓基元、手指槽尺寸等
+ * @returns 检测到的手指槽列表
+ */
+export const autoFingerSlots = async (params: {
+  mode: string;
+  foam: Record<string, any>;
+  gridfinity: Record<string, any>;
+  primitives: any[];
+  tool_offset: number;
+  slot_width: number;
+  slot_depth: number;
+  slot_length: number;
+}): Promise<{
+  success: boolean;
+  error?: string;
+  finger_slots?: Array<{
+    x: number;
+    y: number;
+    length: number;
+    width: number;
+    depth: number;
+    rotation: number;
+  }>;
+}> => {
+  try {
+    const response = await fetch("http://localhost:8001/auto-finger-slots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error auto-detecting finger slots:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+      finger_slots: [],
     };
   }
 };
