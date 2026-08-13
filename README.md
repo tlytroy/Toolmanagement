@@ -157,10 +157,9 @@ reference/                    # 算法参考实现（纯净备份）
 1. **撤销/重做**：MaskEditor 支持 Ctrl+Z/Y 撤销重做
 2. **控制点拖拽**：在基元上显示可拖拽控制点，手动微调轮廓
 3. **多工具排版**：MaxRects 自动排版 + 手动拖拽
-4. **手指槽生成**：自动 + 手动微调
-5. **多格式导出**：STEP/3MF/DXF/SVG/PDF
-6. **画廊 / 历史记录**：本地保存设计历史
-7. **清理无用 npm 包**：opencv-js / minisam / onnxruntime-web
+4. **多格式导出**：STEP/3MF/DXF/SVG/PDF
+5. **画廊 / 历史记录**：本地保存设计历史
+6. **清理无用 npm 包**：opencv-js / minisam / onnxruntime-web
 
 ## API 端点
 
@@ -172,6 +171,7 @@ reference/                    # 算法参考实现（纯净备份）
 | `/update-contour`    | POST | 从蒙版提取原始轮廓（快速预览）           |
 | `/simplify-contours` | POST | 轮廓抽稀基元化（曲率分段 line/arc 拟合） |
 | `/generate-cad`      | POST | 生成 3D 模型（STL base64）               |
+| `/auto-finger-slots` | POST | 自动检测工具轮廓位置，生成手指槽参数     |
 
 ## 参考资源
 

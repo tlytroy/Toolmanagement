@@ -824,6 +824,46 @@ npm run dev
 - **参数自适应**：`max_radius = img_diag * 0.03`，`curv_thresh = clamp(0.02, 0.05, 50/img_diag)`
 - **不涉及**：A4 纸张检测（`detect_paper_corners` / `perspective_warp`）、工具轮廓提取（`extract_tool_contours_v26` / `convert_contour_to_primitives`）未修改
 
+### 2026-08-13 手指槽功能完整实现 + 后端 bug 修复（第七次会话）
+
+**文件**：`python_backend/main.py` + `python_backend/cad_engine.py` + `src/app/store.ts` + `src/api/toolProcessor.ts` + `src/utils/types.ts` + `src/features/params/ParamsPanel.tsx` + `src/features/workspace/Viewport.tsx` + `README.md` + `DEVELOPMENT_GUIDE.md`
+
+**改动**：
+
+- **新增 `python_backend/main.py` `/auto-finger-slots` 端点**：
+  - 接收 primitives + 可选参数（slot_width/slot_depth/slot_length/base_size_x/base_size_y）
+  - 调用 `cad_engine._auto_detect_finger_slots()` 自动计算工具轮廓两端的手指槽位置
+  - 返回手指槽参数列表 + 数量摘要
+- **`cad_engine.py` 新增功能**：
+  - `_make_capsule_2d()`：生成 2D 胶囊形（stadium shape）多边形，支持 half 模式（沿长轴切一半）
+  - `_extrude_finger_slot()`：单个手指槽 3D 实体生成（半胶囊形孔道，从侧壁水平穿入）
+  - `_generate_finger_slots()`：合并所有手指槽实体（用于从基底布尔减）
+  - `_auto_detect_finger_slots()`：PCA 主成分分析 → 沿工具轮廓长轴两端自动放置手指槽
+  - `generate_insert()` 集成手指槽：参数增加 `finger_slots` 字段，生成时从基底布尔减去手指槽实体
+- **`cad_engine.py` bug 修复**：
+  - 修复 `generate_insert()` 中 `base_height` NameError（之前写成了 `params.gridfinity.size_z`，但 `GridfinityParams` 没有 `size_z` 属性，正确应该是 `params.gridfinity.height_mm`）
+- **前端 store 新增**：
+  - `cadParams.finger_slot_enabled: boolean` — 手指槽总开关（默认 true）
+  - `cadParams.finger_slot_auto: boolean` — 自动/手动切换（默认 true）
+  - `cadParams.finger_slots: FingerSlot[]` — 手动绘制的手指槽参数
+- **前端 types 新增**：
+  - `FingerSlot` 类型定义（x/y/length/width/depth/rotation）
+  - `AutoFingerSlotParams` 类型定义（自动检测请求参数）
+  - `AutoFingerSlotResult` 类型定义（自动检测返回结果）
+- **`ParamsPanel.tsx` 手指槽配置 UI**：
+  - 主开关「启用手指槽」checkbox — 关闭时隐藏所有子选项，`onGenerate` 发送空数组
+  - 开启后：「自动检测」/「手动绘制」radio 切换
+  - 自动模式：点击「自动检测手指槽」→ 调 `/auto-finger-slots` API → 预览结果
+  - 手动模式：提示用户在 Viewport 中用铅笔工具绘制
+  - 手动模式下显示 slot 参数滑块（宽度/长度/深度）
+- **`Viewport.tsx` 条件渲染**：
+  - `isManualSlotMode` 额外检查 `cadParams.finger_slot_enabled`
+  - 手指槽禁用时，不显示铅笔工具
+- **验证**：
+  - Python 后端 3 个测试全部通过（Foam 无槽/Foam 有槽/Gridfinity 有槽）
+  - TypeScript 编译无错误
+  - FastAPI 全部 7 个端点注册成功
+
 ### 2026-08-13 文档更新 + ParamsPanel 参数范围修正
 
 **文件**：`README.md` + `DEVELOPMENT_GUIDE.md`
