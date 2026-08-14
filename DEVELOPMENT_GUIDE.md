@@ -77,7 +77,7 @@ src/
 ├── vite-env.d.ts                     # Vite 类型声明
 │
 ├── app/
-│   └── store.ts                      # Zustand 全局状态（step/imageUrl/primitives + CADParams/CADResult）
+│   └── store.ts                      # Zustand 全局状态（step/imageUrl/primitives + CADParams/CADResult + fingerSlots/stackable）
 │
 ├── api/
 │   └── toolProcessor.ts              # 所有后端 API 调用封装
@@ -87,6 +87,8 @@ src/
 │       updateContour(maskData)       → POST /update-contour
 │       simplifyContours(maskData)    → POST /simplify-contours
 │       generateCAD(params,prims)     → POST /generate-cad
+│       generateSTEP(params,prims)    → POST /generate-step
+│       autoDetectFingerSlots(params) → POST /auto-finger-slots
 │
 ├── utils/
 │   └── types.ts                      # Primitive/Point/LinePrimitive/CADParams/CADResult 等类型定义
@@ -130,20 +132,24 @@ src/
     │   └── ParamsPanel.tsx           # ★ 参数配置（Foam/Gridfinity 模式 + 滑块参数 + 生成按钮）
     │
     └── export/
-        └── ExportPanel.tsx           # ★ 导出 STL（base64 解码 + 下载）+ 模型摘要（顶点/面/体积/范围）
+        └── ExportPanel.tsx           # ★ 导出 STL/STEP（base64 解码 + 下载）+ 模型摘要（顶点/面/体积/范围）
 ```
 
 ### 2.2 后端 `python_backend/`
 
 ```
 python_backend/
-├── main.py                           # FastAPI 应用入口（6 个 API 端点，含 /generate-cad）
+├── main.py                           # FastAPI 应用入口（9 个 API 端点：detect-paper / extract-contours / extract-tool-mask / update-contour / simplify-contours / generate-cad / generate-step / auto-finger-slots / health）
 ├── cad_engine.py                     # ★ CAD 引擎：Foam 嵌件 + Gridfinity 基座 3D 建模
 │   generate_cad_model(primitives, params) → trimesh.Scene → STL base64
+│   generate_step_from_dict(params)   #   STEP AP242 导出（cadquery 实现）
 │   _primitives_to_polygon()          #   基元 → shapely Polygon（含缓冲/简化）
 │   _extrude_foam_insert()            #   Foam 模式：多边形 → 直壁/斜壁挤压
 │   _extrude_gridfinity_base()        #   Gridfinity 模式：基座 + 凹槽阵列
 │   _make_rounded_box()               #   圆角矩形辅助（shapely buffer → 挤压）
+│   generate_stackable_rim()          #   可堆叠唇边（lip_width/lip_height）
+│   generate_finger_slot()            #   手指槽几何体生成
+│   _auto_detect_finger_slots()       #   自动检测轮廓位置生成手指槽参数
 ├── requirements.txt                  # fastapi, uvicorn, opencv-python, numpy, trimesh, manifold3d, shapely
 │
 ├── sam_tool_contour.py               # ★ v26 工具轮廓提取（主算法）

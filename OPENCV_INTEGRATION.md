@@ -96,19 +96,21 @@ npm run dev
 
 ## API 端点一览
 
-| 端点                 | 方法 | 输入                       | 输出                                               |
-| -------------------- | ---- | -------------------------- | -------------------------------------------------- |
-| `/detect-paper`      | POST | 图片文件 (multipart)       | corners, warped_image, confidence, skew            |
-| `/extract-contours`  | POST | 图片文件 (multipart)       | primitives, debug_image, summary                   |
-| `/extract-tool-mask` | POST | 图片文件 (multipart)       | mask_image                                         |
-| `/update-contour`    | POST | mask_image (base64 JSON)   | primitives (原始 polyline)                         |
-| `/simplify-contours` | POST | mask_image (base64 JSON)   | primitives (line/arc/polyline), summary            |
-| `/generate-cad`      | POST | primitives + params (JSON) | stl_base64, summary (vertices/faces/volume/bounds) |
+| 端点                 | 方法 | 输入                       | 输出                                                |
+| -------------------- | ---- | -------------------------- | --------------------------------------------------- |
+| `/detect-paper`      | POST | 图片文件 (multipart)       | corners, warped_image, confidence, skew             |
+| `/extract-contours`  | POST | 图片文件 (multipart)       | primitives, debug_image, summary                    |
+| `/extract-tool-mask` | POST | 图片文件 (multipart)       | mask_image                                          |
+| `/update-contour`    | POST | mask_image (base64 JSON)   | primitives (原始 polyline)                          |
+| `/simplify-contours` | POST | mask_image (base64 JSON)   | primitives (line/arc/polyline), summary             |
+| `/generate-cad`      | POST | primitives + params (JSON) | stl_base64, summary (vertices/faces/volume/bounds)  |
+| `/generate-step`     | POST | primitives + params (JSON) | step_base64, summary (vertices/faces/volume/bounds) |
+| `/auto-finger-slots` | POST | primitives + params (JSON) | finger_slots[] (x/y/length/width/depth/rotation)    |
 
 ## 参考资源
 
-- `python_backend/main.py` — FastAPI 服务主入口
-- `python_backend/cad_engine.py` — CAD 建模引擎
+- `python_backend/main.py` — FastAPI 服务主入口（9 个端点）
+- `python_backend/cad_engine.py` — CAD 建模引擎（STL + STEP 导出，含手指槽/可堆叠唇边）
 - `python_backend/latest_paper_detection.py` — 纸张检测代理模块
 - `python_backend/sam_tool_contour.py` — v26 工具轮廓提取
 - `reference/pkg_paper_detection/robust_paper_detector.py` — 纸张检测算法参考

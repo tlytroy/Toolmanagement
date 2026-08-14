@@ -34,7 +34,8 @@ Toolmanagement-web 是一个基于浏览器的工具轮廓扫描和 3D 收纳生
    - Zustand：状态管理
 
 4. **多格式导出**
-   - STL：直接切片 3D 打印（已实现）
+   - STL：直接切片 3D 打印 ✅
+   - STEP：CAD 二次编辑（Fusion 360 / SolidWorks）✅
    - SVG/PDF：待实现
 
 ## 目标用户
@@ -48,11 +49,11 @@ Toolmanagement-web 是一个基于浏览器的工具轮廓扫描和 3D 收纳生
 - **前端框架**：React 19 + TypeScript 6 + Vite 8
 - **状态管理**：Zustand 5
 - **画布编辑**：原生 Canvas 3 层架构（display/preview/interaction）
-- **3D 渲染**：Three.js 0.185（STLLoader + OrbitControls）
+- **3D 渲染**：Three.js 0.185（STLLoader + OrbitControls + 自动旋转）
 - **样式框架**：Tailwind CSS 3
 - **后端框架**：FastAPI + uvicorn (:8001)
 - **图像处理**：OpenCV 4.9 (cv2)
-- **CAD 建模**：trimesh + manifold3d + shapely
+- **CAD 建模**：trimesh + manifold3d + shapely（Foam/Gridfinity 双模式，可堆叠唇边，手指槽）
 - **后端依赖**：numpy, pillow, python-multipart
 
 ## 快速开始
@@ -151,13 +152,16 @@ reference/                    # 算法参考实现（纯净备份）
 - **CAD 引擎**：trimesh + manifold3d + shapely，Foam/Gridfinity 双模式 ✅
 - **3D 预览**：Three.js STLLoader + OrbitControls + 自动旋转 ✅
 - **STL 导出**：后端生成 → base64 → 前端下载 ✅
+- **STEP 导出**：/generate-step 端点 → CAD 编辑格式 ✅
+- **手指槽**：自动检测 + 手动绘制 + 条件启用 ✅
+- **可堆叠唇边**：Stackable 模式（lip_width/lip_height 可调）✅
 
 ### 近期计划 🚀
 
 1. **撤销/重做**：MaskEditor 支持 Ctrl+Z/Y 撤销重做
 2. **控制点拖拽**：在基元上显示可拖拽控制点，手动微调轮廓
 3. **多工具排版**：MaxRects 自动排版 + 手动拖拽
-4. **多格式导出**：STEP/3MF/DXF/SVG/PDF
+4. **多格式导出补齐**：3MF/DXF/SVG/PDF
 5. **画廊 / 历史记录**：本地保存设计历史
 6. **清理无用 npm 包**：opencv-js / minisam / onnxruntime-web
 
@@ -171,6 +175,7 @@ reference/                    # 算法参考实现（纯净备份）
 | `/update-contour`    | POST | 从蒙版提取原始轮廓（快速预览）           |
 | `/simplify-contours` | POST | 轮廓抽稀基元化（曲率分段 line/arc 拟合） |
 | `/generate-cad`      | POST | 生成 3D 模型（STL base64）               |
+| `/generate-step`     | POST | 生成 3D 模型（STEP base64，CAD 编辑用）  |
 | `/auto-finger-slots` | POST | 自动检测工具轮廓位置，生成手指槽参数     |
 
 ## 参考资源
