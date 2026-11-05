@@ -1182,7 +1182,7 @@ git tag pre-m0
 - 有没有在移植代码里保留 `-(p[1] + offset_y)` 取负（入参已是 y-up，再取负 = 竖直镜像）
 - `BoardConfig` 是否与 §3.1 的字段清单**逐一对应**（含 v1.3 新增的 `sizeMode` / `widthMm` / `heightMm`）；**残留旧名** `fillet` / `corner_r` / `base_chamfer` / `size_mode`（TS 侧）/ `distortionWarningMm` 任一出现即打回
 - 手孔形态的判据**必须是生效 `depth`**（`depthOverride ?? embedDepth`）；凡出现 `thickness >=` / `thickness <` 作为形态判据一律打回（**手孔与板厚无关**），凡直接用裸 `embedDepth` 判据也对 `depthOverride` 不成立
-- `sphere` 手孔是否断言 `abs(bbox[0][2] − (top_z − depth)) ≤ 0.01`（**`≥ 0` 恒真，等于没查**）
+- `sphere` 手孔是否断言 `abs(bbox[2] − (top_z − depth)) ≤ 0.01`（`bbox[2]` = minZ；**`≥ 0` 恒真，等于没查**）
 - `from_dict` 是否静默忽略未知字段（必须 400 `SCHEMA_UNKNOWN_FIELD`）
 - 是否校验了"槽/手孔完全落在板轮廓内"（`tools_in_board`）
 - **板尺寸是否被当成工具数量的函数**：`sizeMode='custom'` / `'print-bed'` 时板尺寸**必须**只由 `widthMm/heightMm` 或 `printBed` 决定，出现"按工具并集自动放大"一律打回（用户 m02193：板尺寸是独立自由度）
