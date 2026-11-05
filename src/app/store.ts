@@ -58,6 +58,7 @@ export interface CADParams {
 
 export interface CADResult {
   stl_base64: string | null;
+  step_base64: string | null;
   summary: {
     vertices: number;
     faces: number;
@@ -148,7 +149,7 @@ export const useStore = create<AppState>((set) => ({
   setCADParams: (p) => set((s) => ({ cadParams: { ...s.cadParams, ...p } })),
   resetCADParams: () => set({ cadParams: { ...defaultCADParams } }),
 
-  cadResult: { stl_base64: null, summary: null },
+  cadResult: { stl_base64: null, step_base64: null, summary: null },
   setCADResult: (cadResult) => set({ cadResult }),
 
   isGenerating: false,

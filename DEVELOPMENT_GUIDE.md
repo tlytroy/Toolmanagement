@@ -38,7 +38,8 @@
 │         算法模块 (纯 OpenCV, 无 SAM)            │
 │  latest_paper_detection.py                     │
 │  sam_tool_contour.py (v26 轮廓)                │
-│  main.py (内联 curvature-based 抽稀基元化)     │
+│  curvature_simplify.py (curvature-based 抽稀)  │
+│  models.py (Pydantic 参数模型)                 │
 │  cad_engine.py (trimesh + manifold3d CAD)      │
 └──────────────────────────────────────────────┘
 ```
@@ -165,6 +166,21 @@ python_backend/
 ├── latest_paper_detection.py         # 纸张检测（调用 reference/robust_paper_detector）
 │   detect_paper_corners_latest()     #   四角检测
 │   warp_paper_latest()               #   透视校正（固定 A4 840×1188px）
+│
+├── curvature_simplify.py             # ★ 轮廓抽稀基元化：curvature-based 分段（line/arc 拟合）
+│   simplify_contour_to_primitives()  #   主入口：mask → findContours → 曲率分段 → 拟合
+│   _compute_curvature()              #   一阶曲率计算（相邻边夹角 sinθ）
+│   _segment_by_curvature()           #   形态学侵蚀/膨胀分段，输出 LINE / ARC_CAND 段
+│   _fit_arc_robust()                 #   鲁棒圆弧拟合（cv2.fitEllipse + 圆度/跨度/误差校验）
+│   _subdivide_polyline()             #   fallback：细粒度 DP 折线
+│                                      #   2026-08-14 从 main.py 独立为模块
+│
+├── models.py                         # ★ Pydantic 参数模型（从 cad_engine.py 独立）
+│   CADParams / InsertParams          #   CAD 总配置
+│   BoxParams                         #   Foam 模式参数
+│   GridfinityParams                  #   Gridfinity 模式参数
+│   FingerSlotParams                  #   手指槽参数
+│                                      #   2026-08-14 从 cad_engine.py 独立为模块
 │
 ├── advanced_tool_contour.py          # 旧版轮廓提取（四策略并集，已被 v26 替代）
 │                                      #   保留作为 fallback 参考
@@ -891,3 +907,30 @@ npm run dev
 
 - **修复 `handleUpdateContour` 语义错误**：之前同时更新 `simplifiedPrimitives` 和 `currentPrimitives`，导致「更新轮廓」按钮错误地修改了简化基元计数（EditorPanel 显示的基元数量）。
 - **修正后**：`handleUpdateContour` 仅更新 `currentPrimitives`（用于 Viewport 红色轮廓预览），不触碰 `simplifiedPrimitives`（仅由「抽稀基元化」按钮设置）。
+
+### 2026-08-14 curvature_simplify.py + models.py 模块独立 + 文档同步
+
+**文件**：`python_backend/curvature_simplify.py`（新文件）+ `python_backend/models.py`（新文件）+ `python_backend/main.py` + `python_backend/cad_engine.py` + `DEVELOPMENT_GUIDE.md` + `README.md`
+
+**改动**：
+
+- **新增 `python_backend/curvature_simplify.py`**：将 `main.py` 中 `/simplify-contours` 端点的 curvature-based 抽稀算法独立为模块：
+  - `simplify_contour_to_primitives()` — 主入口：mask → findContours → 曲率分段 → 拟合
+  - `_compute_curvature()` — 一阶曲率计算（相邻边夹角 sinθ）
+  - `_segment_by_curvature()` — 形态学侵蚀/膨胀分段，输出 LINE / ARC_CAND 段
+  - `_fit_arc_robust()` — 鲁棒圆弧拟合（cv2.fitEllipse + 圆度/跨度/误差校验）
+  - `_subdivide_polyline()` — fallback：细粒度 DP 折线
+  - `main.py` 通过 `from curvature_simplify import simplify_contour_to_primitives` 导入
+- **新增 `python_backend/models.py`**：将 `cad_engine.py` 中的 Pydantic 参数模型独立为模块：
+  - `CADParams` / `InsertParams` — CAD 总配置
+  - `BoxParams` — Foam 模式参数
+  - `GridfinityParams` — Gridfinity 模式参数
+  - `FingerSlotParams` — 手指槽参数
+  - `cad_engine.py` 通过 `from models import InsertParams, BoxParams, GridfinityParams, FingerSlotParams` 导入
+- **`main.py` 更新**：移除内联 curvature 函数（`_compute_curvature`、`_segment_by_curvature`、`_fit_arc_robust`、`_subdivide_polyline`），改为导入 `curvature_simplify`；移除内联 Pydantic 模型（`CADParams`、`FingerSlotParams` 等），改为导入 `models`。
+- **`README.md` 更新**：项目结构章节新增 `curvature_simplify.py` 和 `models.py` 文件描述，更新后端文件树。
+- **`DEVELOPMENT_GUIDE.md` 更新**：
+  - §1.1 架构图中新增 `curvature_simplify.py` 和 `models.py` 模块
+  - §2.2 后端文件树添加新模块的详细函数清单
+  - 附录新增本次会话的开发日志
+- **验证**：`cd python_backend && python3 main.py` → FastAPI 启动无 import 错误，所有 7 个端点注册成功。

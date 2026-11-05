@@ -327,6 +327,81 @@ export const autoFingerSlots = async (params: {
 };
 
 /**
+ * 生成 CAD 3D 模型（STEP 格式 base64）
+ * @param params CAD 参数
+ * @param primitives 基元数据
+ * @returns STEP base64 + 统计信息
+ */
+export const generateSTEP = async (
+  params: CADParams,
+  primitives: Primitive[],
+): Promise<{
+  success: boolean;
+  error?: string;
+  step_base64?: string;
+  summary?: {
+    vertices: number;
+    faces: number;
+    volume_mm3: number;
+    bounds: { x: number[]; y: number[]; z: number[] };
+    length_mm?: number;
+    width_mm?: number;
+    height_mm?: number;
+    fillet_radius?: number;
+    units_x?: number;
+    units_y?: number;
+    height_u?: number;
+  };
+}> => {
+  try {
+    const body: any = {
+      mode: params.mode,
+      primitives,
+      embed_depth: params.embed_depth,
+      tool_offset: params.tool_offset,
+      finger_slots: (params as any).finger_slots || [],
+    };
+
+    if (params.mode === "foam") {
+      body.foam = {
+        length_mm: params.length_mm,
+        width_mm: params.width_mm,
+        height_mm: params.height_mm,
+        fillet_radius: params.fillet_radius,
+        stackable: params.stackable,
+        stack_lip_width: params.stack_lip_width,
+        stack_lip_height: params.stack_lip_height,
+      };
+    } else {
+      body.gridfinity = {
+        units_x: params.units_x,
+        units_y: params.units_y,
+        height_u: params.height_u,
+        has_magnet_holes: params.has_magnet_holes,
+      };
+    }
+
+    const response = await fetch("http://localhost:8001/generate-step", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error generating STEP:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+};
+
+/**
  * 简化轮廓（抽稀基元化）
  * @param maskData 蒙版数据
  * @returns 简化后的基元

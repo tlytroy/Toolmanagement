@@ -10,11 +10,11 @@ export function ParamsPanel() {
   };
 
   const onGenerate = async () => {
-    const { generateCAD: apiGenerate, autoFingerSlots: apiAutoSlots } = await import("@/api/toolProcessor");
+    const { generateCAD: apiGenerate, generateSTEP: apiGenerateStep, autoFingerSlots: apiAutoSlots } = await import("@/api/toolProcessor");
     const { primitives, setCADResult, setIsGenerating } = useStore.getState();
 
     setIsGenerating(true);
-    setCADResult({ stl_base64: null, summary: null });
+    setCADResult({ stl_base64: null, step_base64: null, summary: null });
 
     try {
       // 如果手指槽被禁用，传入空列表；否则根据 auto/manual 模式决定
@@ -57,10 +57,19 @@ export function ParamsPanel() {
         }
       }
 
-      const result = await apiGenerate({ ...p, finger_slots: slots }, primitives);
+      const paramsWithSlots = { ...p, finger_slots: slots };
+
+      // 并行生成 STL 和 STEP
+      const [stlResult, stepResult] = await Promise.all([
+        apiGenerate(paramsWithSlots, primitives),
+        apiGenerateStep(paramsWithSlots, primitives),
+      ]);
+
       setCADResult({
-        stl_base64: result.stl_base64 ?? null,
-        summary: result.summary ?? null,
+        stl_base64: stlResult.stl_base64 ?? null,
+        step_base64: stepResult.step_base64 ?? null,
+        // 使用 STL 的结果摘要（两者相同）
+        summary: stlResult.summary ?? null,
       });
     } catch (error) {
       console.error("生成 3D 模型失败:", error);

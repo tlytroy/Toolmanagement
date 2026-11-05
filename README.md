@@ -101,9 +101,11 @@ src/
 ├── app/
 │   └── store.ts              # Zustand 全局状态（step/imageUrl/primitives/CADParams/CADResult）
 ├── api/
-│   └── toolProcessor.ts      # 后端 API 调用封装（6 个端点）
+│   └── toolProcessor.ts      # 后端 API 调用封装（8 个端点）
 ├── components/
 │   └── ui/                   # 共享 UI 组件（Button/Card/Badge/icons 等）
+├── hooks/
+│   └── useWorkflow.ts        # ★ 工作流 Hook：编排完整"图片→检测→提取→编辑→抽稀→CAD生成"管线
 ├── features/
 │   ├── workspace/            # 工作区外壳（Workspace/TopBar/LeftRail/Viewport/PlanningPanel）
 │   ├── upload/               # 上传面板
@@ -111,7 +113,7 @@ src/
 │   ├── segmentation/         # 轮廓提取面板
 │   ├── editor/               # 蒙版编辑器（MaskEditor）+ 编辑面板
 │   ├── params/               # 参数配置面板（Foam/Gridfinity 双模式）
-│   └── export/               # 导出面板（STL 下载 + 模型摘要 + 3D 预览）
+│   └── export/               # 导出面板（STL/STEP 下载 + 模型摘要 + 3D 预览）
 ├── pages/
 │   └── Home.tsx              # 入口页面
 ├── utils/
@@ -120,8 +122,10 @@ src/
 └── main.tsx                  # ReactDOM 入口
 
 python_backend/
-├── main.py                   # FastAPI 服务（6 个端点，含 curvature-based 基元化算法）
+├── main.py                   # FastAPI 服务（9 个端点：detect-paper / extract-contours / extract-tool-mask / update-contour / simplify-contours / generate-cad / generate-step / auto-finger-slots / health）
 ├── cad_engine.py             # ★ CAD 引擎：Foam 嵌件 + Gridfinity 基座 3D 建模
+├── curvature_simplify.py     # ★ 轮廓抽稀基元化：curvature-based 分段（line/arc 拟合），从 main.py 独立
+├── models.py                 # ★ 参数模型：CADParams / FoamParams / GridfinityParams 等 Pydantic 模型，从 cad_engine.py 独立
 ├── latest_paper_detection.py # 纸张检测（代理 robust_paper_detector）
 ├── sam_tool_contour.py       # v26 工具轮廓提取
 ├── requirements.txt          # Python 依赖

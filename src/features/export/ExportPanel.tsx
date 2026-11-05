@@ -1,27 +1,37 @@
 import { Icon } from "@/components/ui/icons";
 import { useStore } from "@/app/store";
 
+function downloadBase64(base64: string, filename: string, mime: string) {
+  const byteString = atob(base64);
+  const bytes = new Uint8Array(byteString.length);
+  for (let i = 0; i < byteString.length; i++) {
+    bytes[i] = byteString.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export function ExportPanel() {
   const { cadResult, cadParams } = useStore();
-  const { stl_base64, summary } = cadResult;
+  const { stl_base64, step_base64, summary } = cadResult;
 
   const handleDownloadSTL = () => {
     if (!stl_base64) return;
-    const byteString = atob(stl_base64);
-    const bytes = new Uint8Array(byteString.length);
-    for (let i = 0; i < byteString.length; i++) {
-      bytes[i] = byteString.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: "application/vnd.ms-pki.stl" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
     const mode = cadParams.mode === "foam" ? "foam" : "gridfinity";
-    a.download = `tool_${mode}.stl`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBase64(stl_base64, `tool_${mode}.stl`, "application/vnd.ms-pki.stl");
+  };
+
+  const handleDownloadSTEP = () => {
+    if (!step_base64) return;
+    const mode = cadParams.mode === "foam" ? "foam" : "gridfinity";
+    downloadBase64(step_base64, `tool_${mode}.step`, "application/step");
   };
 
   const handleDownloadSVG = () => {
@@ -32,7 +42,9 @@ export function ExportPanel() {
     // PDF 导出 — 后续实现
   };
 
-  if (!stl_base64) {
+  const hasAnyData = !!(stl_base64 || step_base64);
+
+  if (!hasAnyData) {
     return (
       <div>
         <div className="flex items-center gap-2 mb-1">
@@ -102,10 +114,29 @@ export function ExportPanel() {
       <div className="space-y-2">
         <button
           onClick={handleDownloadSTL}
-          className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all bg-brand-600 hover:bg-brand-500 text-white flex items-center justify-center gap-2"
+          disabled={!stl_base64}
+          className={
+            "w-full py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 " +
+            (stl_base64
+              ? "bg-brand-600 hover:bg-brand-500 text-white"
+              : "bg-canvas-800 text-zinc-500 border border-canvas-700 cursor-not-allowed")
+          }
         >
           <Icon name="download" size={16} />
           下载 STL（3D 打印）
+        </button>
+        <button
+          onClick={handleDownloadSTEP}
+          disabled={!step_base64}
+          className={
+            "w-full py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 " +
+            (step_base64
+              ? "bg-brand-600 hover:bg-brand-500 text-white"
+              : "bg-canvas-800 text-zinc-500 border border-canvas-700 cursor-not-allowed")
+          }
+        >
+          <Icon name="download" size={16} />
+          下载 STEP（CAD 编辑）
         </button>
         <button
           onClick={handleDownloadSVG}

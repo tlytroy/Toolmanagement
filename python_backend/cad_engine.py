@@ -12,6 +12,8 @@ import numpy as np
 import trimesh
 import base64
 import io
+import os
+import tempfile
 from typing import List, Dict, Any, Optional, Tuple
 
 try:
@@ -53,145 +55,9 @@ def _manifold_to_trimesh(man: Manifold) -> trimesh.Trimesh:
     return trimesh.Trimesh(vertices=verts, faces=faces)
 
 
-# ── 参数模型 ──────────────────────────────────────────
+# ── 参数模型（从 models.py 共享） ──────────────────────
 
-class BoxParams:
-    """方盒参数（Foam 模式用）"""
-    def __init__(
-        self,
-        length_mm: float = 200.0,
-        width_mm: float = 150.0,
-        height_mm: float = 20.0,
-        fillet_radius: float = 5.0,
-        wall_thickness: float = 2.0,
-        stackable: bool = False,
-        stack_lip_width: float = STACK_LIP_WIDTH_DEFAULT,
-        stack_lip_height: float = STACK_LIP_HEIGHT_DEFAULT,
-    ):
-        self.length_mm = length_mm
-        self.width_mm = width_mm
-        self.height_mm = height_mm
-        self.fillet_radius = fillet_radius
-        self.wall_thickness = wall_thickness
-        self.stackable = stackable
-        self.stack_lip_width = stack_lip_width
-        self.stack_lip_height = stack_lip_height
-
-    def to_dict(self) -> dict:
-        return {
-            "length_mm": self.length_mm,
-            "width_mm": self.width_mm,
-            "height_mm": self.height_mm,
-            "fillet_radius": self.fillet_radius,
-            "wall_thickness": self.wall_thickness,
-            "stackable": self.stackable,
-            "stack_lip_width": self.stack_lip_width,
-            "stack_lip_height": self.stack_lip_height,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "BoxParams":
-        return cls(
-            length_mm=d.get("length_mm", 200.0),
-            width_mm=d.get("width_mm", 150.0),
-            height_mm=d.get("height_mm", 20.0),
-            fillet_radius=d.get("fillet_radius", 5.0),
-            wall_thickness=d.get("wall_thickness", 2.0),
-            stackable=d.get("stackable", False),
-            stack_lip_width=d.get("stack_lip_width", STACK_LIP_WIDTH_DEFAULT),
-            stack_lip_height=d.get("stack_lip_height", STACK_LIP_HEIGHT_DEFAULT),
-        )
-
-
-class GridfinityParams:
-    """Gridfinity 模式参数"""
-    def __init__(
-        self,
-        units_x: int = 3,
-        units_y: int = 2,
-        height_u: float = 3.0,
-        has_magnet_holes: bool = True,
-    ):
-        self.units_x = units_x
-        self.units_y = units_y
-        self.height_u = height_u
-        self.has_magnet_holes = has_magnet_holes
-
-    @property
-    def size_x(self) -> float:
-        return self.units_x * GRIDFINITY_PITCH
-
-    @property
-    def size_y(self) -> float:
-        return self.units_y * GRIDFINITY_PITCH
-
-    @property
-    def height_mm(self) -> float:
-        return self.height_u * 7.0 + GRIDFINITY_BASE_THICKNESS
-
-    def to_dict(self) -> dict:
-        return {
-            "units_x": self.units_x,
-            "units_y": self.units_y,
-            "height_u": self.height_u,
-            "has_magnet_holes": self.has_magnet_holes,
-            "size_x": self.size_x,
-            "size_y": self.size_y,
-            "height_mm": self.height_mm,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "GridfinityParams":
-        return cls(
-            units_x=d.get("units_x", 3),
-            units_y=d.get("units_y", 2),
-            height_u=d.get("height_u", 3.0),
-            has_magnet_holes=d.get("has_magnet_holes", True),
-        )
-
-
-class InsertParams:
-    """嵌件参数（总配置）"""
-    def __init__(
-        self,
-        mode: str = "foam",
-        foam: Optional[BoxParams] = None,
-        gridfinity: Optional[GridfinityParams] = None,
-        primitives: Optional[List[Dict]] = None,
-        tool_offset: float = 1.0,
-        embed_depth: float = 15.0,
-        finger_slots: Optional[List[Dict]] = None,
-    ):
-        self.mode = mode
-        self.foam = foam or BoxParams()
-        self.gridfinity = gridfinity or GridfinityParams()
-        self.primitives = primitives or []
-        self.tool_offset = tool_offset
-        self.embed_depth = embed_depth
-        self.finger_slots = finger_slots or []
-
-    def to_dict(self) -> dict:
-        return {
-            "mode": self.mode,
-            "foam": self.foam.to_dict(),
-            "gridfinity": self.gridfinity.to_dict(),
-            "tool_offset": self.tool_offset,
-            "embed_depth": self.embed_depth,
-            "num_primitives": len(self.primitives),
-            "num_finger_slots": len(self.finger_slots),
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "InsertParams":
-        return cls(
-            mode=d.get("mode", "foam"),
-            foam=BoxParams.from_dict(d.get("foam", {})),
-            gridfinity=GridfinityParams.from_dict(d.get("gridfinity", {})),
-            primitives=d.get("primitives", []),
-            tool_offset=d.get("tool_offset", 1.0),
-            embed_depth=d.get("embed_depth", 15.0),
-            finger_slots=d.get("finger_slots", []),
-        )
+from models import BoxParams, GridfinityParams, InsertParams
 
 
 # ── 几何构建函数 ─────────────────────────────────────
@@ -282,10 +148,6 @@ def _make_stackable_features(
     lh = max(lh, 0.5)
     gd = max(gd, 0.5)
 
-    # 内缩尺寸（lip/groove 的内外边界）
-    inner_off = lw
-    outer_off = 0.0  # lip/groove 的外边界就是底板边缘
-
     try:
         from shapely.geometry import box as sbox
 
@@ -295,10 +157,10 @@ def _make_stackable_features(
 
         # 内轮廓（lip/groove 的内边界）
         inner_poly = sbox(
-            -params.length_mm/2 + inner_off,
-            -params.width_mm/2 + inner_off,
-            params.length_mm/2 - inner_off,
-            params.width_mm/2 - inner_off,
+            -params.length_mm/2 + lw,
+            -params.width_mm/2 + lw,
+            params.length_mm/2 - lw,
+            params.width_mm/2 - lw,
         )
 
         # 环形区域 = 外 - 内
@@ -313,7 +175,7 @@ def _make_stackable_features(
 
         # ── 顶部 groove 切除（从顶面向下挖槽）──
         # groove 比 lip 略宽（加 clearance），保证松配合
-        groove_inner_off = inner_off + STACK_CLEARANCE
+        groove_inner_off = lw + STACK_CLEARANCE
         groove_outer_off = -STACK_CLEARANCE  # 外边界略缩
 
         groove_inner_poly = sbox(
@@ -813,7 +675,7 @@ def generate_insert(params: InsertParams) -> Dict[str, Any]:
                             lip = trimesh.creation.extrude_polygon(ring, height=lh)
                             lip.apply_translation([0, 0, -params.foam.height_mm / 2 - lh / 2])
 
-                        # 顶部 groove（从基底顶面挖掉）
+                            # 顶部 groove（从基底顶面挖掉）
                             groove_inner = sbox(
                                 -params.foam.length_mm/2 + lw + STACK_CLEARANCE,
                                 -params.foam.width_mm/2 + lw + STACK_CLEARANCE,
@@ -835,6 +697,9 @@ def generate_insert(params: InsertParams) -> Dict[str, Any]:
                                 base = trimesh.util.concatenate([base, lip])
                                 # groove 用减法
                                 base = base.difference(groove_cut)
+                            else:
+                                # 只有 lip，没有 groove
+                                base = trimesh.util.concatenate([base, lip])
                 except Exception as e:
                     print(f"堆叠特征布尔运算失败 (no manifold): {e}")
 
@@ -925,6 +790,208 @@ def generate_insert(params: InsertParams) -> Dict[str, Any]:
         }
 
 
+# ── STEP 导出 ──────────────────────────────────────────
+
+def _mesh_to_step_base64(mesh: trimesh.Trimesh) -> Optional[str]:
+    """
+    将 trimesh 网格转换为 STEP 格式的 base64 编码。
+    
+    使用 cadquery (OpenCASCADE) 将三角网格转换为 STEP AP242 格式。
+    STEP 文件可被 Fusion 360、SolidWorks、FreeCAD 等主流 CAD 软件编辑。
+    """
+    try:
+        import cadquery as cq
+        from OCP.StlAPI import StlAPI_Reader
+        from OCP.TopoDS import TopoDS_Shape
+    except ImportError as e:
+        print(f"STEP 导出需要 cadquery: {e}")
+        return None
+
+    # 将 trimesh 导出为 STL 字节
+    stl_bytes = mesh.export(file_type='stl')
+
+    # 使用临时文件：StlAPI_Reader 需要文件路径
+    tmp_stl = os.path.join(tempfile.gettempdir(), f"_cq_step_{os.getpid()}.stl")
+    tmp_step = os.path.join(tempfile.gettempdir(), f"_cq_step_{os.getpid()}.step")
+    try:
+        with open(tmp_stl, 'wb') as f:
+            f.write(stl_bytes)
+
+        # 通过 OpenCASCADE 读取 STL → shape
+        shape = TopoDS_Shape()
+        reader = StlAPI_Reader()
+        if not reader.Read(shape, tmp_stl):
+            print("STEP 导出：STL 导入失败")
+            return None
+
+        # 通过 cadquery 导出 shape → STEP
+        wp = cq.Workplane('XY').newObject([shape])
+        cq.exporters.export(wp, tmp_step)
+
+        with open(tmp_step, 'rb') as f:
+            step_bytes = f.read()
+
+        return base64.b64encode(step_bytes).decode("utf-8")
+    except Exception as e:
+        print(f"STEP 导出失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        # 清理临时文件
+        for p in [tmp_stl, tmp_step]:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+
+
+def generate_step(params: InsertParams) -> Dict[str, Any]:
+    """
+    生成嵌件 3D 模型并导出为 STEP 格式。
+    
+    与 generate_insert 相同的几何生成逻辑，但输出为 STEP AP242 格式，
+    可在 Fusion 360、SolidWorks、FreeCAD 等 CAD 软件中直接编辑。
+    
+    返回:
+        {
+            "success": bool,
+            "error": str (optional),
+            "step_base64": str (base64 encoded STEP),
+        }
+    """
+    try:
+        # 复用 generate_insert 的几何生成逻辑，只替换导出格式
+        # 1. 生成基底
+        if params.mode == "gridfinity":
+            base = _make_gridfinity_base(params.gridfinity)
+            base_size_x = params.gridfinity.size_x
+            base_size_y = params.gridfinity.size_y
+        else:
+            base = _make_rounded_box(
+                params.foam.length_mm,
+                params.foam.width_mm,
+                params.foam.height_mm,
+                params.foam.fillet_radius,
+            )
+            base_size_x = params.foam.length_mm
+            base_size_y = params.foam.width_mm
+
+        # 2. 堆叠特征（仅 Foam 模式）
+        if params.mode == "foam" and params.foam.stackable:
+            stack_feature = _make_stackable_features(params.foam)
+            if stack_feature is not None:
+                try:
+                    if HAS_MANIFOLD:
+                        m_base = _trimesh_to_manifold(base)
+                        m_stack = _trimesh_to_manifold(stack_feature)
+                        base = _manifold_to_trimesh(m_base + m_stack)
+                    else:
+                        from shapely.geometry import box as sbox
+                        lw = min(params.foam.stack_lip_width, min(params.foam.length_mm, params.foam.width_mm) * 0.15)
+                        lh = min(params.foam.stack_lip_height, params.foam.height_mm * 0.3)
+                        lw = max(lw, 1.0)
+                        lh = max(lh, 0.5)
+
+                        inner_poly = sbox(
+                            -params.foam.length_mm/2 + lw,
+                            -params.foam.width_mm/2 + lw,
+                            params.foam.length_mm/2 - lw,
+                            params.foam.width_mm/2 - lw,
+                        )
+                        outer_poly = sbox(
+                            -params.foam.length_mm/2,
+                            -params.foam.width_mm/2,
+                            params.foam.length_mm/2,
+                            params.foam.width_mm/2,
+                        )
+                        ring = outer_poly.difference(inner_poly)
+                        if ring is not None and ring.area > 1.0:
+                            lip = trimesh.creation.extrude_polygon(ring, height=lh)
+                            lip.apply_translation([0, 0, -params.foam.height_mm / 2 - lh / 2])
+                            groove_inner = sbox(
+                                -params.foam.length_mm/2 + lw + STACK_CLEARANCE,
+                                -params.foam.width_mm/2 + lw + STACK_CLEARANCE,
+                                params.foam.length_mm/2 - lw - STACK_CLEARANCE,
+                                params.foam.width_mm/2 - lw - STACK_CLEARANCE,
+                            )
+                            groove_outer = sbox(
+                                -params.foam.length_mm/2 - STACK_CLEARANCE,
+                                -params.foam.width_mm/2 - STACK_CLEARANCE,
+                                params.foam.length_mm/2 + STACK_CLEARANCE,
+                                params.foam.width_mm/2 + STACK_CLEARANCE,
+                            )
+                            groove_ring = groove_outer.difference(groove_inner)
+                            if groove_ring is not None and groove_ring.area > 1.0:
+                                groove_cut = trimesh.creation.extrude_polygon(groove_ring, height=lh)
+                                groove_cut.apply_translation([0, 0, params.foam.height_mm / 2 - lh / 2])
+                                base = trimesh.util.concatenate([base, lip])
+                                base = base.difference(groove_cut)
+                            else:
+                                # 只有 lip，没有 groove
+                                base = trimesh.util.concatenate([base, lip])
+                except Exception as e:
+                    print(f"堆叠特征布尔运算失败 (STEP): {e}")
+
+        # 3. 工具槽
+        if params.primitives:
+            tool_slot = _extrude_tool_slot(
+                params.primitives,
+                params.embed_depth,
+                params.tool_offset,
+                base_size_x,
+                base_size_y,
+            )
+            if tool_slot is not None:
+                try:
+                    if HAS_MANIFOLD:
+                        m_base = _trimesh_to_manifold(base)
+                        m_slot = _trimesh_to_manifold(tool_slot)
+                        base = _manifold_to_trimesh(m_base - m_slot)
+                    else:
+                        base = base.difference(tool_slot)
+                except Exception as e:
+                    print(f"工具槽布尔运算失败 (STEP): {e}")
+
+        # 3.5 手指槽
+        finger_slots = params.finger_slots
+        if finger_slots and len(finger_slots) > 0:
+            base_height = params.foam.height_mm if params.mode == "foam" else params.gridfinity.height_mm
+            finger_mesh = _generate_finger_slots(finger_slots, base_height)
+            if finger_mesh is not None:
+                try:
+                    if HAS_MANIFOLD:
+                        m_base = _trimesh_to_manifold(base)
+                        m_finger = _trimesh_to_manifold(finger_mesh)
+                        base = _manifold_to_trimesh(m_base - m_finger)
+                    else:
+                        base = base.difference(finger_mesh)
+                except Exception as e:
+                    print(f"手指槽布尔运算失败 (STEP): {e}")
+
+        # 4. 导出 STEP
+        step_base64 = _mesh_to_step_base64(base)
+        if step_base64 is None:
+            return {
+                "success": False,
+                "error": "STEP 导出失败：无法将网格转换为 STEP 格式",
+            }
+
+        return {
+            "success": True,
+            "step_base64": step_base64,
+        }
+    except Exception as e:
+        print(f"STEP 生成失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
 # ── 兼容性包装 ────────────────────────────────────────
 
 def generate_stl(params: dict) -> dict:
@@ -970,3 +1037,47 @@ def generate_stl(params: dict) -> dict:
     )
 
     return generate_insert(insert_params)
+
+
+def generate_step_from_dict(params: dict) -> dict:
+    """
+    接收原始 dict 参数，转换为 InsertParams 后调用 generate_step。
+    与 generate_stl 相同的参数格式。
+    """
+    mode = params.get("mode", "foam")
+    foam_dict = params.get("foam", {})
+    gridfinity_dict = params.get("gridfinity", {})
+
+    stackable = foam_dict.get("stackable", False)
+    stack_lip_width = foam_dict.get("stack_lip_width", STACK_LIP_WIDTH_DEFAULT)
+    stack_lip_height = foam_dict.get("stack_lip_height", STACK_LIP_HEIGHT_DEFAULT)
+
+    foam = BoxParams(
+        length_mm=foam_dict.get("length_mm", 200.0),
+        width_mm=foam_dict.get("width_mm", 150.0),
+        height_mm=foam_dict.get("height_mm", 20.0),
+        fillet_radius=foam_dict.get("fillet_radius", 5.0),
+        wall_thickness=foam_dict.get("wall_thickness", 2.0),
+        stackable=stackable,
+        stack_lip_width=stack_lip_width,
+        stack_lip_height=stack_lip_height,
+    )
+
+    gridfinity = GridfinityParams(
+        units_x=gridfinity_dict.get("units_x", 3),
+        units_y=gridfinity_dict.get("units_y", 2),
+        height_u=gridfinity_dict.get("height_u", 3.0),
+        has_magnet_holes=gridfinity_dict.get("has_magnet_holes", True),
+    )
+
+    insert_params = InsertParams(
+        mode=mode,
+        foam=foam,
+        gridfinity=gridfinity,
+        primitives=params.get("primitives", []),
+        tool_offset=params.get("tool_offset", 1.0),
+        embed_depth=params.get("embed_depth", 15.0),
+        finger_slots=params.get("finger_slots", []),
+    )
+
+    return generate_step(insert_params)

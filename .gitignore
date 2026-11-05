@@ -35,3 +35,7 @@ coverage/
 
 # Typescript build info
 *.tsbuildinfo
+# Python venv & bytecode (added at v1 baseline)
+.venv/
+__pycache__/
+*.pyc
