@@ -39,3 +39,6 @@ coverage/
 .venv/
 __pycache__/
 *.pyc
+
+# Local editor / agent settings (not project source)
+.claude/
