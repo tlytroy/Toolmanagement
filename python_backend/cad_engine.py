@@ -11,9 +11,6 @@
 import numpy as np
 import trimesh
 import base64
-import io
-import os
-import tempfile
 from typing import List, Dict, Any, Optional, Tuple
 
 try:
@@ -21,6 +18,11 @@ try:
     HAS_MANIFOLD = True
 except ImportError:
     HAS_MANIFOLD = False
+
+# 静默失败计数（0.8）：每个 except 分支都会往这里追加一条人类可读的原因。
+# ★ 冻结文件，只允许「追加一行」；**不**改逻辑、**不**改返回值。
+# 由调用方（main.py 的信封层）在每次请求前 clear()，请求后读走塞进 warnings[]。
+errors: List[str] = []
 
 # ── 常量 ─────────────────────────────────────────────
 GRIDFINITY_PITCH = 42.0          # Gridfinity 标准网格间距 (mm)
@@ -36,6 +38,22 @@ STACK_LIP_WIDTH_DEFAULT = 3.0    # 堆叠唇边宽度 (mm)
 STACK_LIP_HEIGHT_DEFAULT = 2.0   # 堆叠唇边高度 (mm)
 STACK_GROOVE_DEPTH_DEFAULT = 2.0 # 堆叠槽深度 (mm)
 STACK_CLEARANCE = 0.2            # 堆叠间隙 (mm)，防止过紧
+
+# ── 毫米链（计划 v1.3 §0.3 / 缺陷 F1）──────────────────
+# 10 px/mm 是**固定常量**，图像 → mm 只有一个方向：mm = px / PX_PER_MM。
+# 禁止任何按纸边长度 / 底板尺寸 / 画布尺寸动态推导的比例 —— F1 的根因就是
+# 按板尺寸把轮廓重新缩放去「铺满底板」的写法（见 git 历史里的 F1）。
+# 与 `imaging/constants.py` 的 PX_PER_MM 同值；这里不 import 它，因为
+# `imaging/__init__.py` 用的是 `from python_backend.imaging.api import ...` 绝对导入，
+# 在 `cd python_backend` 口径下会 ModuleNotFoundError。
+# ★ 只定义正向常量 PX_PER_MM。反向常量（0.1）由 `imaging/constants.py` 独占持有：
+#   imaging 的 DoD ③ 禁止 imaging/ 之外的生产模块出现那个名字（纯文本扫描），
+#   这里要用就现写 `1.0 / PX_PER_MM`，不要另立常量。
+PX_PER_MM = 10.0                 # px / mm
+
+# 基元接龙时判定「两个端点算同一个点」的容差（px）。0.2mm 量级：圆弧拟合的
+# 首末采样点与相邻直线端点本来就不重合（拟合残差可达 1~2px）。
+_RING_JOIN_TOL_PX = 2.0
 
 # ── Manifold 转换辅助 ─────────────────────────────────
 
@@ -96,6 +114,7 @@ def _make_rounded_box(
         result.apply_translation([0, 0, -size_z / 2])
         return result
     except Exception:
+        errors.append("圆角拉伸失败，退回方块")
         return trimesh.creation.box(extents=[size_x, size_y, size_z])
 
 
@@ -121,6 +140,7 @@ def _make_rounded_rectangle_polygon(
         rounded = inner.buffer(corner_r, quad_segs=segments // 4)
         return rounded
     except Exception:
+        errors.append("圆角轮廓失败，退回直角矩形")
         from shapely.geometry import box as sbox
         return sbox(-size_x/2, -size_y/2, size_x/2, size_y/2)
 
@@ -210,6 +230,7 @@ def _make_stackable_features(
             return combined
 
     except Exception as e:
+        errors.append("堆叠特征生成失败")
         print(f"堆叠特征生成失败: {e}")
         return None
 
@@ -252,6 +273,7 @@ def _make_gridfinity_base(params: GridfinityParams) -> trimesh.Trimesh:
 
         return _manifold_to_trimesh(result)
     except Exception:
+        errors.append("gridfinity 磁吸孔布尔失败，退回无孔底板")
         return base
 
 
@@ -369,6 +391,7 @@ def _extrude_finger_slot(
         
         return slot_mesh
     except Exception as e:
+        errors.append("手指槽拉伸失败")
         print(f"手指槽拉伸失败: {e}")
         return None
 
@@ -400,6 +423,7 @@ def _generate_finger_slots(
         combined = trimesh.util.concatenate(meshes)
         return combined
     except Exception as e:
+        errors.append("合并手指槽失败")
         print(f"合并手指槽失败: {e}")
         return meshes[0]
 
@@ -426,7 +450,7 @@ def _auto_detect_finger_slots(
     if not primitives:
         return []
     
-    points = _primitives_to_2d_polygon(primitives, offset_mm=0)
+    points = _primitives_to_2d_polygon(primitives)
     if points is None or len(points) < 3:
         return []
     
@@ -481,126 +505,252 @@ def _auto_detect_finger_slots(
 
 
 
-def _primitives_to_2d_polygon(
-    primitives: List[Dict],
-    offset_mm: float = 0.0,
-) -> Optional[np.ndarray]:
-    """
-    将基元列表转换为 2D 多边形点列。
-    返回 N×2 numpy array，或 None。
-    """
-    if not primitives:
-        return None
-
-    points = []
-    for p in primitives:
-        t = p.get("type", "")
-        if t == "line":
-            p0 = p.get("p0", {})
-            p1 = p.get("p1", {})
-            points.append([p0.get("x", 0), p0.get("y", 0)])
-            points.append([p1.get("x", 0), p1.get("y", 0)])
-        elif t == "arc":
-            for pt in p.get("points", []):
-                points.append([pt.get("x", 0), pt.get("y", 0)])
-        elif t == "polyline":
-            for pt in p.get("points", []):
-                points.append([pt.get("x", 0), pt.get("y", 0)])
-
-    if len(points) < 3:
-        return None
-
-    pts = np.array(points, dtype=np.float64)
-
-    if abs(offset_mm) > 0.01:
-        try:
-            pts = _offset_polygon(pts, offset_mm)
-        except Exception:
-            pass
-
-    return pts
-
-
-def _offset_polygon(pts: np.ndarray, offset: float) -> np.ndarray:
-    """简单多边形偏移（沿法线方向移动顶点）"""
+def _signed_area(pts: np.ndarray) -> float:
+    """鞋带公式有符号面积（px²）。> 0 为 CCW。"""
     n = len(pts)
     if n < 3:
-        return pts
+        return 0.0
+    x = pts[:, 0]
+    y = pts[:, 1]
+    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y))
 
-    result = np.zeros_like(pts)
-    for i in range(n):
-        prev = pts[(i - 1) % n]
-        curr = pts[i]
-        next_ = pts[(i + 1) % n]
 
-        d1 = curr - prev
-        d2 = next_ - curr
-        len1 = np.linalg.norm(d1)
-        len2 = np.linalg.norm(d2)
+def _sample_arc(p: Dict) -> List[List[float]]:
+    """圆弧基元 → 采样点列（px）。
 
-        if len1 < 1e-6 or len2 < 1e-6:
-            result[i] = curr
+    兼容两套键名：`angle_start/angle_end`（optimized_contour_processing.py）与
+    `startAngle/endAngle`（curvature_simplify.py）。`a1 <= a0` 视为逆时针跨 0 度。
+    缺 center/radius/角度时返回空列表，调用方据此跳过该基元。
+    """
+    center = p.get("center") or {}
+    try:
+        cx = float(center.get("x", 0.0))
+        cy = float(center.get("y", 0.0))
+        radius = float(p.get("radius", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return []
+    if radius <= 0.0:
+        return []
+
+    a0 = p.get("angle_start", p.get("startAngle"))
+    a1 = p.get("angle_end", p.get("endAngle"))
+    if a0 is None or a1 is None:
+        return []
+    try:
+        a0 = float(a0)
+        a1 = float(a1)
+    except (TypeError, ValueError):
+        return []
+
+    while a1 <= a0:          # 跨 0 度；a1 == a0 时补成整圆
+        a1 += 360.0
+    span = a1 - a0
+    n = max(8, int(span / 5.0) + 1)
+    angles = np.radians(np.linspace(a0, a1, n))
+    return [
+        [cx + radius * float(np.cos(t)), cy + radius * float(np.sin(t))]
+        for t in angles
+    ]
+
+
+def _primitive_points(p: Dict) -> List[List[float]]:
+    """单个基元 → 有序点列（px，不含闭合重复点）。"""
+    t = p.get("type", "")
+    if t == "line":
+        p0 = p.get("p0") or {}
+        p1 = p.get("p1") or {}
+        return [
+            [float(p0.get("x", 0.0)), float(p0.get("y", 0.0))],
+            [float(p1.get("x", 0.0)), float(p1.get("y", 0.0))],
+        ]
+    if t == "polyline":
+        return [
+            [float(q.get("x", 0.0)), float(q.get("y", 0.0))]
+            for q in (p.get("points") or [])
+        ]
+    if t == "arc":
+        pts = [
+            [float(q.get("x", 0.0)), float(q.get("y", 0.0))]
+            for q in (p.get("points") or [])
+        ]
+        if len(pts) >= 2:
+            return pts
+        return _sample_arc(p)
+    return []
+
+
+def _chain_rings(
+    primitives: List[Dict],
+    tol: float = _RING_JOIN_TOL_PX,
+) -> List[np.ndarray]:
+    """把 line/arc/polyline 串成有序闭合环（px）。
+
+    ★ 旧实现按**出现顺序**直接拼接点（历史 :503-521），既不保证闭合、也不保证方向，
+      内环还会被拍平成外环的一段。这里改为端点接龙：每步从当前环末端出发，找端点
+      距离 <= tol 的基元接上（必要时整段反向），直到接不上为止，然后开下一个环。
+
+    环的顶点坐标**原样保留**（不插值、不吸附），因此 roundtrip 可以做到逐点相等；
+    只有末尾那个与首点重合的闭合点会被去掉（shapely 的 Polygon 隐式闭合）。
+    """
+    pending: List[np.ndarray] = []
+    for p in primitives:
+        pts = _primitive_points(p)
+        if len(pts) >= 2:
+            pending.append(np.asarray(pts, dtype=np.float64))
+
+    rings: List[np.ndarray] = []
+    while pending:
+        cur = [tuple(pt) for pt in pending.pop(0)]
+        joined = True
+        while joined:
+            joined = False
+            end = np.asarray(cur[-1], dtype=np.float64)
+            for i, seg in enumerate(pending):
+                if np.linalg.norm(seg[0] - end) <= tol:
+                    cur.extend(tuple(pt) for pt in seg[1:])
+                elif np.linalg.norm(seg[-1] - end) <= tol:
+                    cur.extend(tuple(pt) for pt in seg[::-1][1:])
+                else:
+                    continue
+                pending.pop(i)
+                joined = True
+                break
+        ring = np.asarray(cur, dtype=np.float64)
+        if len(ring) >= 2 and np.linalg.norm(ring[-1] - ring[0]) <= tol:
+            ring = ring[:-1]        # 去掉重复的闭合点
+        if len(ring) >= 3:
+            rings.append(ring)
+    return rings
+
+
+def _primitives_to_rings(primitives: List[Dict]) -> List[np.ndarray]:
+    """基元 → 环列表（px），按 |面积| 降序；`rings[0]` 是外环。"""
+    rings = _chain_rings(primitives)
+    rings.sort(key=lambda r: abs(_signed_area(r)), reverse=True)
+    return rings
+
+
+def _primitives_to_shape(primitives: List[Dict]):
+    """基元 → shapely Polygon（px，含内环），失败返回 None。
+
+    外环 = |面积| 最大的环；其余环若被外环包含则作为内孔。嵌在内孔里的岛
+    （第三层嵌套）会被忽略 —— 旧引擎只需要「外轮廓 + 内孔」。
+    """
+    rings = _primitives_to_rings(primitives)
+    if not rings:
+        return None
+
+    from shapely.geometry import Polygon
+
+    outer = Polygon([tuple(pt) for pt in rings[0]])
+    if outer.is_empty or not outer.is_valid:
+        return None
+
+    holes: List[list] = []
+    for ring in rings[1:]:
+        cand = Polygon([tuple(pt) for pt in ring])
+        if cand.is_empty or not cand.is_valid:
             continue
+        if outer.contains(cand):
+            holes.append([tuple(pt) for pt in ring])
 
-        n1 = np.array([-d1[1] / len1, d1[0] / len1])
-        n2 = np.array([-d2[1] / len2, d2[0] / len2])
+    poly = Polygon([tuple(pt) for pt in rings[0]], holes)
+    if poly.is_empty or not poly.is_valid:
+        return None
+    return poly
 
-        avg_n = (n1 + n2) / 2
-        norm = np.linalg.norm(avg_n)
-        if norm < 1e-6:
-            avg_n = n1
-            norm = 1.0
 
-        cos_half = np.dot(n1, avg_n / norm)
-        if abs(cos_half) < 0.01:
-            cos_half = 0.01
-        compensation = 1.0 / cos_half
+def _primitives_to_2d_polygon(primitives: List[Dict]) -> Optional[np.ndarray]:
+    """兼容旧调用方：只返回**外环**点列（px，N×2）。要内环请用 `_primitives_to_shape`。"""
+    rings = _primitives_to_rings(primitives)
+    if not rings:
+        return None
+    return rings[0]
 
-        result[i] = curr + avg_n / norm * offset * compensation
 
-    return result
+def _paper_mm_shape(primitives: List[Dict]):
+    """基元 → 纸面毫米 shapely Polygon（固定 10 px/mm，不读任何板/纸尺寸）。"""
+    shape_px = _primitives_to_shape(primitives)
+    if shape_px is None:
+        return None
+
+    from shapely import affinity
+
+    # 缩放（含内环）交给 shapely，自己遍历 exterior/interiors 容易漏掉 LinearRing
+    # 与闭合点的细节。
+    _s = 1.0 / PX_PER_MM
+    return affinity.scale(shape_px, xfact=_s, yfact=_s, origin=(0.0, 0.0))
+
+
+def _to_board_frame_shape(shape, center: Tuple[float, float]):
+    """纸面 mm(y-down) → 板局部 mm(y-up，原点 = 板心)。
+
+    与 `geometry/polygon.py:44` 的 `to_board_frame` 同式：
+
+        (x, y) -> (x - cx, cy - y)
+
+    ★ y 取反（cy - y）是必须的：旧代码 `poly_mm -= center` 展开是 (x-cx, y-cy)，
+      y 方向符号反了 —— 这是 F1 的第二个组成部分，不要再退回去。
+    """
+    from shapely import affinity
+
+    cx, cy = center
+    moved = affinity.translate(shape, xoff=-cx, yoff=-cy)
+    return affinity.scale(moved, xfact=1.0, yfact=-1.0, origin=(0.0, 0.0))
 
 
 def _extrude_tool_slot(
     primitives: List[Dict],
     embed_depth: float,
     tool_offset: float,
-    base_size_x: float,
-    base_size_y: float,
+    base_size_x: Optional[float] = None,
+    base_size_y: Optional[float] = None,
 ) -> Optional[trimesh.Trimesh]:
-    """
-    从工具轮廓拉伸生成工具槽（用于从基底布尔减去）。
-    """
-    # 假设校正图尺寸 840×1188 px
-    img_width, img_height = 840.0, 1188.0
+    """从工具轮廓拉伸生成工具槽（用于从基底布尔减去）。
 
-    polygon_2d = _primitives_to_2d_polygon(primitives, offset_mm=tool_offset)
-    if polygon_2d is None or len(polygon_2d) < 3:
+    ★ 毫米链（计划 v1.3 §0.3 / 缺陷 F1）：px → mm **只用固定 `PX_PER_MM = 10.0`**。
+      `base_size_x` / `base_size_y` **不参与任何换算**，保留形参仅为兼容既有调用方
+      与回归测试（同一轮廓在不同板尺寸下必须得到同一把刀）。
+
+      历史上这里把轮廓当作「校正图是固定像素尺寸」的像素坐标，再按
+      `min(base_size_x / img_w, base_size_y / img_h)` 缩放去「铺满」底板 ——
+      于是同一工具换个板就得到不同大小的槽。那套换算不要加回来。
+    """
+    shape_mm = _paper_mm_shape(primitives)
+    if shape_mm is None or shape_mm.is_empty:
         return None
 
-    # 缩放至基底尺寸并居中
-    scale = min(base_size_x / img_width, base_size_y / img_height)
-    poly_mm = polygon_2d * scale
-    center = poly_mm.mean(axis=0)
-    poly_mm -= center
+    # 纸面 mm(y-down) → 板局部 mm(y-up)，原点 = 轮廓 bbox 中心
+    minx, miny, maxx, maxy = shape_mm.bounds
+    center = ((minx + maxx) / 2.0, (miny + maxy) / 2.0)
+    shape_board = _to_board_frame_shape(shape_mm, center)
 
-    # 确保逆时针
-    area = 0.5 * np.sum(
-        poly_mm[:-1, 0] * poly_mm[1:, 1] - poly_mm[1:, 0] * poly_mm[:-1, 1]
-    )
-    if area < 0:
-        poly_mm = poly_mm[::-1]
+    # 间隙：mm 域 miter 偏置（正值外扩）。替换原先手写的「平均法向 + 1/cos」偏移，
+    # 后者无自交清理，而且把 mm 当成 px 用（差 10 倍）。
+    if abs(tool_offset) > 1e-9:
+        try:
+            shape_board = shape_board.buffer(
+                tool_offset, join_style=2, mitre_limit=2.0
+            )
+        except Exception as e:
+            print(f"工具槽间隙偏置失败: {e}")
+            return None
+        if shape_board.is_empty:
+            return None
+        if shape_board.geom_type == "MultiPolygon":
+            shape_board = max(shape_board.geoms, key=lambda g: g.area)
 
     try:
-        from shapely.geometry import Polygon
-        poly = Polygon(poly_mm)
-        if not poly.is_valid or poly.area < 0.1:
-            return None
+        from shapely.geometry.polygon import orient
 
-        slot = trimesh.creation.extrude_polygon(poly, height=embed_depth + 1)
+        shape_board = orient(shape_board, sign=1.0)      # 外环 CCW、内孔 CW
+        if shape_board.area < 0.1:                       # mm²
+            return None
+        slot = trimesh.creation.extrude_polygon(shape_board, height=embed_depth + 1)
         slot.apply_translation([0, 0, -embed_depth / 2])
         return slot
     except Exception as e:
+        errors.append("工具槽拉伸失败")
         print(f"工具槽拉伸失败: {e}")
         return None
 
@@ -701,6 +851,7 @@ def generate_insert(params: InsertParams) -> Dict[str, Any]:
                                 # 只有 lip，没有 groove
                                 base = trimesh.util.concatenate([base, lip])
                 except Exception as e:
+                    errors.append("堆叠特征布尔运算失败")
                     print(f"堆叠特征布尔运算失败 (no manifold): {e}")
 
         # 3. 工具槽（从基底减去工具轮廓的拉伸体）
@@ -721,6 +872,7 @@ def generate_insert(params: InsertParams) -> Dict[str, Any]:
                     else:
                         base = base.difference(tool_slot)
                 except Exception as e:
+                    errors.append("工具槽布尔运算失败")
                     print(f"工具槽布尔运算失败: {e}")
 
 
@@ -740,6 +892,7 @@ def generate_insert(params: InsertParams) -> Dict[str, Any]:
                     else:
                         base = base.difference(finger_mesh)
                 except Exception as e:
+                    errors.append("手指槽布尔运算失败")
                     print(f"手指槽布尔运算失败: {e}")
 
         # 4. 导出 STL
@@ -781,209 +934,8 @@ def generate_insert(params: InsertParams) -> Dict[str, Any]:
             "summary": summary,
         }
     except Exception as e:
+        errors.append("CAD 生成失败")
         print(f"CAD 生成失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "success": False,
-            "error": str(e),
-        }
-
-
-# ── STEP 导出 ──────────────────────────────────────────
-
-def _mesh_to_step_base64(mesh: trimesh.Trimesh) -> Optional[str]:
-    """
-    将 trimesh 网格转换为 STEP 格式的 base64 编码。
-    
-    使用 cadquery (OpenCASCADE) 将三角网格转换为 STEP AP242 格式。
-    STEP 文件可被 Fusion 360、SolidWorks、FreeCAD 等主流 CAD 软件编辑。
-    """
-    try:
-        import cadquery as cq
-        from OCP.StlAPI import StlAPI_Reader
-        from OCP.TopoDS import TopoDS_Shape
-    except ImportError as e:
-        print(f"STEP 导出需要 cadquery: {e}")
-        return None
-
-    # 将 trimesh 导出为 STL 字节
-    stl_bytes = mesh.export(file_type='stl')
-
-    # 使用临时文件：StlAPI_Reader 需要文件路径
-    tmp_stl = os.path.join(tempfile.gettempdir(), f"_cq_step_{os.getpid()}.stl")
-    tmp_step = os.path.join(tempfile.gettempdir(), f"_cq_step_{os.getpid()}.step")
-    try:
-        with open(tmp_stl, 'wb') as f:
-            f.write(stl_bytes)
-
-        # 通过 OpenCASCADE 读取 STL → shape
-        shape = TopoDS_Shape()
-        reader = StlAPI_Reader()
-        if not reader.Read(shape, tmp_stl):
-            print("STEP 导出：STL 导入失败")
-            return None
-
-        # 通过 cadquery 导出 shape → STEP
-        wp = cq.Workplane('XY').newObject([shape])
-        cq.exporters.export(wp, tmp_step)
-
-        with open(tmp_step, 'rb') as f:
-            step_bytes = f.read()
-
-        return base64.b64encode(step_bytes).decode("utf-8")
-    except Exception as e:
-        print(f"STEP 导出失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-    finally:
-        # 清理临时文件
-        for p in [tmp_stl, tmp_step]:
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except OSError:
-                pass
-
-
-def generate_step(params: InsertParams) -> Dict[str, Any]:
-    """
-    生成嵌件 3D 模型并导出为 STEP 格式。
-    
-    与 generate_insert 相同的几何生成逻辑，但输出为 STEP AP242 格式，
-    可在 Fusion 360、SolidWorks、FreeCAD 等 CAD 软件中直接编辑。
-    
-    返回:
-        {
-            "success": bool,
-            "error": str (optional),
-            "step_base64": str (base64 encoded STEP),
-        }
-    """
-    try:
-        # 复用 generate_insert 的几何生成逻辑，只替换导出格式
-        # 1. 生成基底
-        if params.mode == "gridfinity":
-            base = _make_gridfinity_base(params.gridfinity)
-            base_size_x = params.gridfinity.size_x
-            base_size_y = params.gridfinity.size_y
-        else:
-            base = _make_rounded_box(
-                params.foam.length_mm,
-                params.foam.width_mm,
-                params.foam.height_mm,
-                params.foam.fillet_radius,
-            )
-            base_size_x = params.foam.length_mm
-            base_size_y = params.foam.width_mm
-
-        # 2. 堆叠特征（仅 Foam 模式）
-        if params.mode == "foam" and params.foam.stackable:
-            stack_feature = _make_stackable_features(params.foam)
-            if stack_feature is not None:
-                try:
-                    if HAS_MANIFOLD:
-                        m_base = _trimesh_to_manifold(base)
-                        m_stack = _trimesh_to_manifold(stack_feature)
-                        base = _manifold_to_trimesh(m_base + m_stack)
-                    else:
-                        from shapely.geometry import box as sbox
-                        lw = min(params.foam.stack_lip_width, min(params.foam.length_mm, params.foam.width_mm) * 0.15)
-                        lh = min(params.foam.stack_lip_height, params.foam.height_mm * 0.3)
-                        lw = max(lw, 1.0)
-                        lh = max(lh, 0.5)
-
-                        inner_poly = sbox(
-                            -params.foam.length_mm/2 + lw,
-                            -params.foam.width_mm/2 + lw,
-                            params.foam.length_mm/2 - lw,
-                            params.foam.width_mm/2 - lw,
-                        )
-                        outer_poly = sbox(
-                            -params.foam.length_mm/2,
-                            -params.foam.width_mm/2,
-                            params.foam.length_mm/2,
-                            params.foam.width_mm/2,
-                        )
-                        ring = outer_poly.difference(inner_poly)
-                        if ring is not None and ring.area > 1.0:
-                            lip = trimesh.creation.extrude_polygon(ring, height=lh)
-                            lip.apply_translation([0, 0, -params.foam.height_mm / 2 - lh / 2])
-                            groove_inner = sbox(
-                                -params.foam.length_mm/2 + lw + STACK_CLEARANCE,
-                                -params.foam.width_mm/2 + lw + STACK_CLEARANCE,
-                                params.foam.length_mm/2 - lw - STACK_CLEARANCE,
-                                params.foam.width_mm/2 - lw - STACK_CLEARANCE,
-                            )
-                            groove_outer = sbox(
-                                -params.foam.length_mm/2 - STACK_CLEARANCE,
-                                -params.foam.width_mm/2 - STACK_CLEARANCE,
-                                params.foam.length_mm/2 + STACK_CLEARANCE,
-                                params.foam.width_mm/2 + STACK_CLEARANCE,
-                            )
-                            groove_ring = groove_outer.difference(groove_inner)
-                            if groove_ring is not None and groove_ring.area > 1.0:
-                                groove_cut = trimesh.creation.extrude_polygon(groove_ring, height=lh)
-                                groove_cut.apply_translation([0, 0, params.foam.height_mm / 2 - lh / 2])
-                                base = trimesh.util.concatenate([base, lip])
-                                base = base.difference(groove_cut)
-                            else:
-                                # 只有 lip，没有 groove
-                                base = trimesh.util.concatenate([base, lip])
-                except Exception as e:
-                    print(f"堆叠特征布尔运算失败 (STEP): {e}")
-
-        # 3. 工具槽
-        if params.primitives:
-            tool_slot = _extrude_tool_slot(
-                params.primitives,
-                params.embed_depth,
-                params.tool_offset,
-                base_size_x,
-                base_size_y,
-            )
-            if tool_slot is not None:
-                try:
-                    if HAS_MANIFOLD:
-                        m_base = _trimesh_to_manifold(base)
-                        m_slot = _trimesh_to_manifold(tool_slot)
-                        base = _manifold_to_trimesh(m_base - m_slot)
-                    else:
-                        base = base.difference(tool_slot)
-                except Exception as e:
-                    print(f"工具槽布尔运算失败 (STEP): {e}")
-
-        # 3.5 手指槽
-        finger_slots = params.finger_slots
-        if finger_slots and len(finger_slots) > 0:
-            base_height = params.foam.height_mm if params.mode == "foam" else params.gridfinity.height_mm
-            finger_mesh = _generate_finger_slots(finger_slots, base_height)
-            if finger_mesh is not None:
-                try:
-                    if HAS_MANIFOLD:
-                        m_base = _trimesh_to_manifold(base)
-                        m_finger = _trimesh_to_manifold(finger_mesh)
-                        base = _manifold_to_trimesh(m_base - m_finger)
-                    else:
-                        base = base.difference(finger_mesh)
-                except Exception as e:
-                    print(f"手指槽布尔运算失败 (STEP): {e}")
-
-        # 4. 导出 STEP
-        step_base64 = _mesh_to_step_base64(base)
-        if step_base64 is None:
-            return {
-                "success": False,
-                "error": "STEP 导出失败：无法将网格转换为 STEP 格式",
-            }
-
-        return {
-            "success": True,
-            "step_base64": step_base64,
-        }
-    except Exception as e:
-        print(f"STEP 生成失败: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -1037,47 +989,3 @@ def generate_stl(params: dict) -> dict:
     )
 
     return generate_insert(insert_params)
-
-
-def generate_step_from_dict(params: dict) -> dict:
-    """
-    接收原始 dict 参数，转换为 InsertParams 后调用 generate_step。
-    与 generate_stl 相同的参数格式。
-    """
-    mode = params.get("mode", "foam")
-    foam_dict = params.get("foam", {})
-    gridfinity_dict = params.get("gridfinity", {})
-
-    stackable = foam_dict.get("stackable", False)
-    stack_lip_width = foam_dict.get("stack_lip_width", STACK_LIP_WIDTH_DEFAULT)
-    stack_lip_height = foam_dict.get("stack_lip_height", STACK_LIP_HEIGHT_DEFAULT)
-
-    foam = BoxParams(
-        length_mm=foam_dict.get("length_mm", 200.0),
-        width_mm=foam_dict.get("width_mm", 150.0),
-        height_mm=foam_dict.get("height_mm", 20.0),
-        fillet_radius=foam_dict.get("fillet_radius", 5.0),
-        wall_thickness=foam_dict.get("wall_thickness", 2.0),
-        stackable=stackable,
-        stack_lip_width=stack_lip_width,
-        stack_lip_height=stack_lip_height,
-    )
-
-    gridfinity = GridfinityParams(
-        units_x=gridfinity_dict.get("units_x", 3),
-        units_y=gridfinity_dict.get("units_y", 2),
-        height_u=gridfinity_dict.get("height_u", 3.0),
-        has_magnet_holes=gridfinity_dict.get("has_magnet_holes", True),
-    )
-
-    insert_params = InsertParams(
-        mode=mode,
-        foam=foam,
-        gridfinity=gridfinity,
-        primitives=params.get("primitives", []),
-        tool_offset=params.get("tool_offset", 1.0),
-        embed_depth=params.get("embed_depth", 15.0),
-        finger_slots=params.get("finger_slots", []),
-    )
-
-    return generate_step(insert_params)
