@@ -158,12 +158,14 @@ slot.apply_translation([0, 0, -embed_depth / 2])
 
 > **▸ 第二轮审核：z 原点全项目只允许一个定义 —— `z = 0` 在板**底**面，板顶面 = `top_z`（SDS §2.3；rect = `thickness`、gridfinity = `heightU*7`，由 `board_top_z(board)` 唯一给出）。**
 > 不再用 ±H/2 居中（`cad_engine.py:96` 的居中做法就是 F1 的成因之一，必须删）。因此下文所有 z 公式里的 `H/2` 都已替换为 `top_z`；**旧代码里的 `[-H/2, +H/2]` 只出现在 §1 对现状的描述中**。
+>
+> **⚠️ bbox API 事实（2026-11-05 实测，manifold3d 3.5.4）**：`Manifold.bounding_box()` 返回**扁平 6 元组** `(minx, miny, minz, maxx, maxy, maxz)`，故 **最大 z = `bb[5]`、最小 z = `bb[2]`**；`bb[1][2]` 会直接 `TypeError`（`bb[1]` 是 float）。`CrossSection.bounds()` 返回扁平 4 元组 `(minx, miny, maxx, maxy)`。本文及 SDS 早期版本写的 `bounding_box()[1][2]` / `bb[1][2]` 一律按上述含义理解（`[1][2]` → `bb[5]`、`[0][2]` → `bb[2]`），**写代码时不得照抄下标**。`trimesh` raycast 参数名是 `ray_origins` / `ray_directions`，且返回的 `loc` **不按距离排序**，首击高度必须取 `max(p[2] for p in loc)`。
 
 `z ∈ [top_z − embed_depth, top_z + 1]`。手指槽同理（`cad_engine.py:359`、`:368` 现在也是从 z=0 起）。
 
 **必须新增的机检断言（M0 DoD，缺一不可）**：
-1. `slot_cutter.bounding_box()[1][2] >= top_z + 0.9`（切刀必须刺出顶面；`top_z` 见 §2.3，gridfinity 上不等于 `thickness`）
-2. 取 `base.section_plane(plane_origin=[0, 0, top_z − 0.01], plane_normal=[0, 0, 1])`，断言槽投影区域内**没有面**（等价于：顶面在该区域是空的）
+1. `slot_cutter.bounding_box()[5] >= top_z + 0.9`（切刀必须刺出顶面；`bounding_box()` 是扁平 6 元组，`[5]` = maxZ；`top_z` 见 §2.3，gridfinity 上不等于 `thickness`）
+2. 取 `base.section(plane_normal=[0, 0, 1], plane_origin=[0, 0, top_z − 0.01])`（trimesh 5.2.0 **没有** `section_plane`，只有 `section`，返回 `Path3D`），断言槽投影区域内**没有面**（等价于：顶面在该区域是空的）
 3. 从板顶 `(x_slot, y_slot, top_z + 10)` 竖直向下 raycast，首击 `z ≈ top_z − embed_depth`（**不是** `top_z`）。这一条是密闭空腔的**唯一**可靠反证。
 
 ### F2. L2 矢量编辑器不存在，是从零写
@@ -279,7 +281,7 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 | **D14'** | **新增：模型分块**（用户 m00776 明确要）。参数「最大打印尺寸」X/Y/Z（默认 220×220×220，用户可改）。板任意一边超出 → 自动裁成 nx×ny 片，每片独立 STL。**切缝只允许落在凹槽之间的实心筋上，绝不穿槽**（穿槽会把凹槽切成侧面开口，工具会滑出来）；该方向找不到任何 ≥2mm 的筋 → 拒绝并提示「请换更大打印机或缩小板」，不静默生成残缺件。片间用**圆柱定位销**而不是燕尾——销的容差好控制，燕尾要精确打印才能插。~~φ4×8 盲孔~~ → **已被 §3.1 的 D14' 修订取代：销必须水平、从切缝面钻入**。~~Gridfinity 板的分块线吸附到 42mm 网格~~ → **已被取代：v1 禁用 Gridfinity 分块**。Z 超限只告警不切。 | 新增（v0.2 曾推迟） |
 | **D15'** | **新增：板的两种外形，都做。** ① **自定义矩形**：`cornerR` + `baseEdgeRoundover` + 板厚；② **Gridfinity**：标准底座/堆叠唇/磁吸孔。切换外形时工具轮廓与手孔位置**原样保留**，只换外框与底座。<br>**板尺寸是独立自由度，不由工具数量推导**（用户 m02193：「理论上是想放几个放几个，A4 纸只是用来作为参考来识别工具大小的」）。`BoardConfig.sizeMode` 三选一：<br>• `'fit-tools'`（默认）——板 = 全部工具并集 bbox 各边 + `margin`；<br>• `'custom'`——用户直接填 `widthMm` / `heightMm`，可以是 60×40（只放一把螺丝刀）也可以是 400×300（放一整套，之后分块）；<br>• `'print-bed'`——板 = `printBed.x × printBed.y` 整张床。<br>三种模式下工具都必须完整落在板内（§7.6 第 9 条 `tools_in_board` 阻断校验）；板大于工具并集时**允许留白**，不做任何自动居中或自动排布。板超出打印床 → 走 D14' 分块（`sizeMode='custom'` 时是主路径而不是异常）。 | 新增（用户 m00776 两个外形；用户 m02193 修正板尺寸语义） |
 | **D11'** | 精度只承诺 **S0（±1.5mm）**。拍照指引 + 照片体检（EXIF 反算相机高度、纸出框、极端透视三条告警）。**不做** 3×3×2 的 18 件 DoD 矩阵。 | 砍 S1/S2 |
-| **D12'** | **新增：两级自检**。L0（2D，最便宜）：`shapely.is_valid` + `explain_validity` + `buffer(0)`——90% 的坏几何死在这一层。L1（3D）：`trimesh.is_watertight` + `is_winding_consistent` + `manifold.status()` + `genus()` + 体积与解析值 ±2% + bbox 对格位。**`is_watertight` 单独用等于没查**——实测两个重叠立方体拼起来仍然 watertight、`status()` 仍返回 `NoError`。壁厚用 `Manifold.min_gap(other, search_length)` 直接量（实测可用）。再加 F1 开口断言：切刀 `bounding_box()[1][2] >= top_z + 0.9`，且 `min_gap` 之外的"首击射线"断言（见 §1 修法第 3 条）。 | 升级，替代 v0.2 六道守卫 |
+| **D12'** | **新增：两级自检**。L0（2D，最便宜）：`shapely.is_valid` + `explain_validity` + `buffer(0)`——90% 的坏几何死在这一层。L1（3D）：`trimesh.is_watertight` + `is_winding_consistent` + `manifold.status()` + `genus()` + 体积与解析值 ±2% + bbox 对格位。**`is_watertight` 单独用等于没查**——实测两个重叠立方体拼起来仍然 watertight、`status()` 仍返回 `NoError`。壁厚用 `Manifold.min_gap(other, search_length)` 直接量（实测可用）。再加 F1 开口断言：切刀 `bounding_box()[5] >= top_z + 0.9`（`[5]` = maxZ），且 `min_gap` 之外的"首击射线"断言（见 §1 修法第 3 条）。 | 升级，替代 v0.2 六道守卫 |
 | **D17'** | **新增：单把工具超过打印床时的策略**。硬约束：**单个凹槽必须完整落在一片内**，否则切缝会把槽劈成两个侧面开口，粘接后也无法使用。即 `工具最长边 ≤ min(打印尺寸X, 打印尺寸Y) − 2×边距`。v1 选 **A 方案：检测到超长 → 明确报错「该工具 280mm，超过你的打印尺寸 200mm，单槽无法分块」**，给出三个出路提示（缩小板/换大床/把该工具移出本板）。B 方案（穿槽 + 侧壁补条）与 C 方案（槽+两侧挡墙三段）留到 v2。 | 新增 |
 | **D16'** | **镜头畸变：不标定，用留白吃掉**（用户 m02193：「没有那么重要，你边缘放大一些，比如预留多几毫米，就能吃掉这个误差了，没必要严丝合缝」）。手机广角在画面边缘 1–2% 桶形畸变，在 210mm 纸宽上约 **2–4mm**。v1 **不做** `cv2.calibrateCamera` 棋盘格标定、不做 ArUco 标记纸、不做去畸变、**也不告警**——而是把 `margin` 默认从 8mm 提到 **12mm**：**`margin` 不是精度手段**，它只保证板边与槽壁之间有 12mm 实体；畸变对**画幅边缘区域**的工具轮廓仍会带来 1–2% 的局部尺寸误差（150mm 工具上就是 1.5–3mm）。因此 S0 ±1.5mm **只对「完整落在纸面内且离纸边 ≥ 20mm」的工具承诺**；「留白吃掉畸变」的真实含义是**给构图留余量**，不是修正轮廓（槽是拿工具轮廓算的，与纸边无关；畸变主要影响**边缘附近**的轮廓采样）。需要的用户随时可以把 `margin` 调到 20mm。**这是精度策略的一部分：S0 ±1.5mm 承诺的是槽尺寸，不是板尺寸。** | 推翻本轮 v1.0 的标定方案（用户否决）；`margin` 默认 8 → 12 |
 | **D13'** | **新增：双输出**。同一份 `Board + Tool[] + pockets` 数据出两种文件：① STL（实心板 + 凹槽）；② DXF/SVG 1:1 平面图（凹槽轮廓 + 每槽深度标注 + 板外框）。DXF 用 `ezdxf` 写，增量约 80 行。**这是"不绑材料"的关键**——CNC/激光直接可用。 | 新增（用户 m00723：CNC 切割也行） |
@@ -337,16 +339,30 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 
 | # | 任务 | DoD |
 |---|---|---|
-| -1.1 | `scripts/smoke_geometry.py`：**环境就绪后**（见上框，WSL venv 已验证可用）用合成 100×20mm 矩形跑一次 `generate_insert` | (a) `slot_cutter.bounding_box()[1][2] > top_z + 0.9`；(b) **从 `(0, 0, top_z + 10)` 竖直向下 raycast，首击 z ≈ `top_z − embed`，而不是 `top_z`**（射线原点必须落在槽**内部**，不能落在槽角顶点上，否则边界命中不稳定）；(c) 槽长 100 ± 0.1mm（与 SDS §10.3 同一量只允许一个容差；±1 会放过 0.9mm 的 scale 残留，正是 F1 类静默错） |
+| -1.1 | `scripts/smoke_geometry.py`：**环境就绪后**（见上框，WSL venv 已验证可用）用合成 100×20mm 矩形跑一次 `generate_insert` | (a) `slot_cutter.bounding_box()[5] > top_z + 0.9`（`[5]` = maxZ）；(b) **从 `(0, 0, top_z + 10)` 竖直向下 raycast（`ray_origins`/`ray_directions`，首击取 `max(p[2] for p in loc)`），首击 z ≈ `top_z − embed`，而不是 `top_z`**（射线原点必须落在槽**内部**，不能落在槽角顶点上，否则边界命中不稳定）；(c) 槽长 100 ± 0.1mm（与 SDS §10.3 同一量只允许一个容差；±1 会放过 0.9mm 的 scale 残留，正是 F1 类静默错） |
 
 > 这一条同时证明三件事：环境能跑、F1 的开口为真、DoD 可离线复现。**没有它，后面每条 DoD 都可能被"静默失败"骗过。**
+
+> **⚠️ 两条探针实测事实（2026-11-05 在 WSL 上跑通，写代码时照此实现）**
+>
+> **1) raycast 探针必须打「盲槽」，不能打「贯穿槽」。** 实测（板 `160×80×12`、槽 `100×20`）：
+> - 盲槽切刀 `z ∈ [6, 13]` → `intersects_location` 返回 **2 个命中 `[0.0, 6.0]`**，`max(z) = 6.0 = top_z − embed` ✅
+> - 贯穿切刀 `z ∈ [-4, 12]` → 返回 **`[]` 空**（射线从孔里穿过去，一个面都打不到），而且此时 `bb[5] − top_z = 0.0`，连 (a) 都不满足
+> - 所以：**射线打空 = 槽被打穿了或板没实体**，不是"库有问题"；排查顺序是「先看 `bb[5] − top_z` 是否 > 0.9，再看槽是否被切成通孔」
+> - 返回的 `loc` **不按距离排序**（实测是 `[0.0, 6.0]`，板底在前），**必须取 `max(p[2] for p in loc)`**，不能取 `loc[0]`
+>
+> **2) 「顶面在该区域是空的」用截面环数判，不用射线。** 在 `z = top_z − 0.01` 处 `mesh.section(plane_normal=[0,0,1], plane_origin=[0,0,z])`，`to_2D()` 后数**中心落在槽投影多边形内部**的闭环数：
+> - 盲槽 → **1 个内环**（槽口轮廓）✅
+> - 不切 → **0 个内环**（只有外轮廓）✅
+> - 注意 `p2d.bounds` 始终是板的外接框（`[-80,-40]..[80,40]`），**不能用 bounds 判断开口**，必须逐环 `Polygon(pts).centroid` 判定
+> - `trimesh` 5.2.0 **没有** `section_plane` 方法（`hasattr(mesh,'section_plane') == False`），只有 `section(plane_normal=, plane_origin=)`
 
 ### M0 — 让后端能跑 + 打通毫米链（2.5 天）
 
 | # | 任务 | DoD |
 |---|---|---|
 | 0.1 | **重写 `python_backend/requirements.txt` 的 pin**（不是"补四个包"）：`numpy>=2.1`、`shapely>=2.2`、`manifold3d>=3.5.4`、`trimesh>=4.4`、`opencv-python-headless>=4.11`、`scikit-image>=0.25`、`ezdxf>=1.3`、fastapi、uvicorn、pillow、python-multipart、`pytest>=8.3`。**删除** `cadquery==2.8.0`（只被 `cad_engine.py:803` 懒加载，服务已砍的 STEP）与 `scipy`（无调用点）；同一任务删 `/generate-step` 端点 | `uvicorn main:app` 能起（**必须先 `cd python_backend`**，`cad_engine.py:59` 是裸 `from models import`）；`pytest` 能收集到用例；`import cv2` 不报 `libGL.so.1`。**不验证 success/volume**——那正是密闭空腔的特征 |
-| 0.2 | **修 z 基准**：新增 `geometry/constants.py` 的 `board_top_z(board)`（rect = `thickness`，gridfinity = `heightU*7`），槽切刀改为 `z ∈ [top_z − embed, top_z + 1]`；手孔切刀用同一条断言覆盖 | summary 输出 `slotBounds` / `baseBounds`（camelCase，与 SDS §4.5 一致；计划旧稿写的 `slot_bounds` 是 snake_case 笔误）；pytest 断言 `slotBounds[1][2] >= top_z + 0.9`，且 `base.section_plane(plane_origin=[0,0,top_z−0.01], plane_normal=[0,0,1])` 在槽投影区域内无面（trimesh 的参数名是 `plane_origin`/`plane_normal`，不是 `z=`） |
+| 0.2 | **修 z 基准**：新增 `geometry/constants.py` 的 `board_top_z(board)`（rect = `thickness`，gridfinity = `heightU*7`），槽切刀改为 `z ∈ [top_z − embed, top_z + 1]`；手孔切刀用同一条断言覆盖 | summary 输出 `slotBounds` / `baseBounds`（camelCase，与 SDS §4.5 一致；计划旧稿写的 `slot_bounds` 是 snake_case 笔误）；pytest 断言 `slotBounds[5] >= top_z + 0.9`（扁平 6 元组，`[5]`=maxZ），且 `base.section(plane_normal=[0,0,1], plane_origin=[0,0,top_z−0.01])` 在槽投影区域内无面（trimesh 5.2.0 只有 `section(plane_normal=, plane_origin=)`，没有 `section_plane`） |
 | 0.3 | **先删错的那行**：`cad_engine.py:582` 的 `scale = min(base_size_x/840, base_size_y/1188)`（真正的缩放元凶），连同 `:575` 的 `840.0/1188.0`、`:585` 的 `poly_mm -= center` 一起处理，改成 `mm = px * 0.1`，原点取纸面坐标 | 100mm 长的合成轮廓 → **切刀长 = 100.0 ± 0.1mm**（M0 阶段尚无 clearance 环节，必须精确等于 100，不许出现 100.8）；**同一轮廓在 200mm 板与 300mm 板上结果完全一致**（防 scale 残留）；截面积相对误差 ≤ 0.1%（不是"±0.05mm² 且 ±2×clearance"那种量纲互斥的写法；容差总表见 SDS §10.3） |
 | 0.3b | **新增：primitives → 有序闭合环**。`_primitives_to_2d_polygon`（`cad_engine.py:503-521`）把 line/arc/polyline 的点**按出现顺序拼接**，不保证闭合、不保证方向、不带内环 | 随机简单多边形往返（polygon → primitives → polygon）后 `shapely.equals_exact(tol=1e-6)`；带 1 个内环的多边形往返后 `holes` 数量与面积不变 |
 | 0.4 | 移植 D1'（固定 10px/mm） | `/api/correct-image` 返回 `warpedImage` + `canvasPx` + `paperOriginPx`，尺寸 = **2400×3270**（A4 竖）/ **3270×2400**（横），纸面占 `[150,2250]×[150,3120]`；`mmPerPx` **只作常量回显**（0.1），**下游任何计算禁止读它**（SDS §4.1/§4.2） |
@@ -366,7 +382,7 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 | 1.4a | Gridfinity 底座剖面 | 底座高 4.75、顶面 chamfer 推导值与 `cq-gridfinity` 常量表一致（±0.01） |
 | 1.4b | 堆叠唇五段剖面 | 逐段 bbox 高度 **2.6 / 1.2 / 0.7 / 1.8 / 1.9**（顺序 = `LIP_D4, LIP_D3, LIP_D2, LIP_D1, LIP_D0`），累计 **8.2**（各段 ±0.01、总和 ±0.05——**总和容差必须 ≥ 5×段容差**，否则五段各偏 0.05 可累到 ±0.25，无 bug 也会红）。真源是 tracefinity 常量，**不是** cq-gridfinity 的斜边写法（那套算出 8.09，会永久红） |
 | 1.4c | 磁吸孔 + 高度公式 | 孔心**相对格心 ±13.0mm**（即距格角 8.0mm）：同一格内相邻两孔心距 **26mm**，跨格相邻两孔（本格的 +13 与邻格的 −13）心距 **16mm**（42 − 26）；`MAGNET_INSET = 4.8` 是**孔边到格角**（8.0 − 6.5/2 = 4.75 ≈ 4.8），**不参与定位**——「距格角 4.8」与「孔心距 26」算术互斥（42 − 2×4.8 = 32.4 ≠ 26）。断言：孔心到格角 8.0 ± 0.1；`height_mm = height_u * GRHU`（3U 必须 = 21mm，±0.01）；磁孔深 2.4，角 R 4.0 |
-| 1.5 | 移植手孔 6 形态 + 倒角（§2.1 #5/#6）+ **重写 `_auto_detect_finger_slots`** | **分两组参数各跑一遍**（默认 `embedDepth=8` 下竖直孔被禁，单组跑不出六形态）：A 组 `thickness=12, embedDepth=8` 只生成 `scoop` 并断言开口；B 组 `thickness=25, embedDepth=22` 生成 `sphere`/`cylinder`/`square`/`rect`/`filleted_rect` 五种并各自断言开口。**形态由生效 `depth`（= `depthOverride ?? embedDepth`）≥ 20 决定**（见 D6'）：`depth < 20` 时**禁止**生成竖直孔（UI 只给 scoop 系），scoop 必须与凹槽**连通**——用 **3D 求交体积** `(scoop_cutter ^ pocket_cutter).volume() > 0.1`（**不能写 `CrossSection` 求交：2D 与 3D 不可交；按 XY 投影解释则正确几何恒为 0，断言恒假**）且坡底 = `top_z − depth`（±0.01，**不是 `thickness − depth`**）；`depth ≥ 20` 时竖直孔按 `depthMode` 断言：`blind` → `abs(bbox[0][2] − (top_z − depth)) ≤ 0.01`；`through` → `bbox[0][2] ≤ −0.5`（**原式「≤ 0.1 = 真贯穿」把合法盲孔判红**）；sphere 断言 `abs(cutter.bounding_box()[0][2] − (top_z − depth)) ≤ 0.01`（**原来的 `≥ 0` 恒真、等于没查**）；`depthMode='through'` 时断言 `bounding_box()[0][2] ≤ −0.5` |
+| 1.5 | 移植手孔 6 形态 + 倒角（§2.1 #5/#6）+ **重写 `_auto_detect_finger_slots`** | **分两组参数各跑一遍**（默认 `embedDepth=8` 下竖直孔被禁，单组跑不出六形态）：A 组 `thickness=12, embedDepth=8` 只生成 `scoop` 并断言开口；B 组 `thickness=25, embedDepth=22` 生成 `sphere`/`cylinder`/`square`/`rect`/`filleted_rect` 五种并各自断言开口。**形态由生效 `depth`（= `depthOverride ?? embedDepth`）≥ 20 决定**（见 D6'）：`depth < 20` 时**禁止**生成竖直孔（UI 只给 scoop 系），scoop 必须与凹槽**连通**——用 **3D 求交体积** `(scoop_cutter ^ pocket_cutter).volume() > 0.1`（**不能写 `CrossSection` 求交：2D 与 3D 不可交；按 XY 投影解释则正确几何恒为 0，断言恒假**）且坡底 = `top_z − depth`（±0.01，**不是 `thickness − depth`**）；`depth ≥ 20` 时竖直孔按 `depthMode` 断言：`blind` → `abs(bbox[2] − (top_z − depth)) ≤ 0.01`；`through` → `bbox[2] ≤ −0.5`（**原式「≤ 0.1 = 真贯穿」把合法盲孔判红**）；sphere 断言 `abs(cutter.bounding_box()[2] − (top_z − depth)) ≤ 0.01`（**原来的 `≥ 0` 恒真、等于没查**）；`depthMode='through'` 时断言 `bounding_box()[2] ≤ −0.5` |
 | 1.0b | **新增：板级参数进数据模型**（从原 2.3a 提前）。`BoardConfig` 增加 `cornerR`（默认 5）、`baseEdgeRoundover`（默认 0）、`slotChamfer`（默认 1.5）；**v1.3 再增板尺寸三字段** `sizeMode`（默认 `'fit-tools'`）/ `widthMm` / `heightMm`，并把 `margin` 默认 8 改 **12**；全部进 Pydantic API schema 与 `summary.paramsEcho` | 字段在 `/api/generate` 请求里可传、在 `summary.paramsEcho` 里原样回显；`sizeMode='custom'` 缺 `widthMm`/`heightMm`，或非 `custom` 模式带了宽高 → 400 `INVALID_SIZE_MODE`；未知字段 → 400 `SCHEMA_UNKNOWN_FIELD` |
 | 1.6 | **自定义矩形外壳**（D15' ①）：按 `sizeMode` 定板尺寸 + `cornerR` + `baseEdgeRoundover` + 板厚 | 给定 **3 个 polygon 输入**（不依赖 M2 的交互），三种 `sizeMode` 各断言一次：① `'fit-tools'` → 板外框 = 并集 bbox 各边 + `margin`(12)；② `'custom'` `widthMm=100, heightMm=80` → `bounding_box()` 得 100×80×thickness（**与工具并集大小无关**）；③ `'print-bed'` → 等于 `(printBed.x − 2*edge) × (printBed.y − 2*edge)`（`edge=5`，220 床 → **210×210**；写成整张床会立刻触发分块）。另断言：`'custom'` 且工具超出板框 → `TOOL_OUT_OF_BOARD`（阻断，不自动放大板）；`cornerR`、`baseEdgeRoundover` 与参数一致 |
 

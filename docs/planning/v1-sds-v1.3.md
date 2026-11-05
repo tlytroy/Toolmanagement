@@ -150,11 +150,11 @@ def to_board_frame(polygon_mm: list[Vec2], center: Vec2) -> list[Vec2]:
   **不是 ±H/2 居中**（`cad_engine.py:96` 的居中必须删除）。
 - **断言（写进 §10.1 单元测试，必须有）**：
   ```python
-  bb = slot_cutter.bounding_box()
-  assert 0.9 <= bb[1][2] - top_z <= 1.0 + 1e-6   # 出顶量统一区间；原写 `== top_z+1 ±1e-6` 与 M-1 的 `> top_z+0.9` 互斥
+  bb = slot_cutter.bounding_box()               # 扁平 6 元组 (minx,miny,minz,maxx,maxy,maxz)
+  assert 0.9 <= bb[5] - top_z <= 1.0 + 1e-6      # maxZ；原写 `== top_z+1 ±1e-6` 与 M-1 的 `> top_z+0.9` 互斥
                                                  # （实现成 0.95 时一处红一处绿）；区间见 §10.3
-  assert bb[0][2] >= 0.0                         # 槽底不得穿板底（blind 时；原写 `< top_z` 恒真——depth>0 必然成立）
-                                                 # through 时改断言 `bb[0][2] <= -0.5`
+  assert bb[2] >= 0.0                            # minZ；槽底不得穿板底（blind 时；原写 `< top_z` 恒真——depth>0 必然成立）
+                                                 # through 时改断言 `bb[2] <= -0.5`
   ```
 
 ### 2.4 多边形绕向规范
@@ -789,7 +789,7 @@ def build_board(board: BoardConfig, tools: list[Tool]) -> tuple[Manifold, Rect]:
 2. **外形尺寸 = `unitsX * 42` × `unitsY * 42`**（顶面净尺寸）。`GRU_CUT = 42.2` 不改变外形，只用于底座切槽的内部尺寸——**不要自己推导，直接读 `constants/gridfinity.py` 的剖面元组**。
 3. **▸ 高度 = `heightU * 7`**（`GRHU=7`，含底座）。3U 必须 = **21mm**。现有的 `height_u*7.0 + 5.0`（`models.py:105`）让 3U = 26mm，比标准高 5mm，**摞不上**；也不要写成 `heightU*7 + 4.75`（= 25.75，同样错）。
    深度 clamp 因此分外形（§3.1 里 `embedDepth` 的「强制 <= thickness-2」**只对矩形板生效**）：矩形 `embed ≤ thickness − 2`；Gridfinity `embed ≤ heightU*7 − 4.75 − 2`，且**槽不得进入堆叠唇区域**。**唇的两个尺寸不要混用**：`LIP_HEIGHT = 8.2mm` 是**垂直**高度；唇在顶面外圈占的**径向**宽度是独立常量 `LIP_WIDTH = 2.6mm`，**由唇剖面各段水平投影之和算出**（`sum(seg.h*|abs(sin a)| + seg.run)`，不是把两个垂直段高 `LIP_D0 + LIP_D2` 相加——那是量纲错），并加断言 `abs(LIP_WIDTH − 2.6) ≤ 0.05`。下文凡「离顶面外沿 X mm 内禁切」一律用 `LIP_WIDTH`，**不要拿 8.2 当带宽**（那是量纲错）。
-   **断言**：`build_board(...).bounding_box()[1][2] == heightU * 7 ± 0.01`（3U → 21mm）。
+   **断言**：`build_board(...).bounding_box()[5] == heightU * 7 ± 0.01`（`[5]` = maxZ；3U → 21mm）。
 4. 底座剖面：按 `GR_BASE_PROFILE` 三段（第一段上倒角、中间 1.8mm 直壁、第三段下倒角），**每段单独 `extrude(scale_top=...)` 后 union**。段高之和必须等于 `GR_BASE_HEIGHT = 4.75`，跑一条断言卡住它。
 5. 堆叠唇：按 `GR_LIP_PROFILE` 五段，做在顶面外圈。
 6. 磁吸孔：每格四角，**孔心相对格心 ±13mm**，φ6.5 × 2.4 深，从底面往上打。
@@ -856,7 +856,7 @@ chamfer   = tool.chamferOverride  if tool.chamferOverride  is not None else boar
 **关键数值**：
 - 切刀 z 上界 = `top_z + 1.0`（保证开口）；下界 = `top_z - depth`。
 - **▸ 锥台的 z 区间是 `[top_z − eff, top_z]`**（第 8 步的 `translate(..., top_z - eff)` + 高度 `eff + 0.01` 正好如此）：**底面与槽底方向一致、顶面与板顶面齐平再向上溢出 0.01 保布尔稳定**；宽度从下往上变大（`scale_top > 1`），形成喇叭口导向。
-  两个反例都会**静默失败**：(a) 把锥台放在 `z ∈ [thickness, thickness + eff]` → 整个锥面悬在板顶上方 1mm 的空气里，槽口仍是直角，而"剖面能看到锥面"的 DoD 照样通过；(b) 沿用 tracefinity 的 `wall_top_z − eff_chamfer` 却把板改成 ±H/2 居中 → 同 (a)；(c) 用 `thickness` 代替 `top_z` → 整个切刀连槽带锥一起下移（gridfinity 上必现）。**因此 z 基准必须只有一处定义（§2.3 的 `top_z`），且此处断言 `cutter_chamfer.bounding_box()[1][2] ≈ top_z + 0.01`。**
+  两个反例都会**静默失败**：(a) 把锥台放在 `z ∈ [thickness, thickness + eff]` → 整个锥面悬在板顶上方 1mm 的空气里，槽口仍是直角，而"剖面能看到锥面"的 DoD 照样通过；(b) 沿用 tracefinity 的 `wall_top_z − eff_chamfer` 却把板改成 ±H/2 居中 → 同 (a)；(c) 用 `thickness` 代替 `top_z` → 整个切刀连槽带锥一起下移（gridfinity 上必现）。**因此 z 基准必须只有一处定义（§2.3 的 `top_z`），且此处断言 `cutter_chamfer.bounding_box()[5] ≈ top_z + 0.01`（`[5]` = maxZ）。**
 - 切刀的 `CrossSection` **必须平移到原点再 extrude**（`scale_top` 绕原点缩放）。
 - 内孔：见上第 6 步（`FillRule.EvenOdd`，面积 <= 0 时整组反向重试一次）。
 
@@ -871,7 +871,7 @@ def build_finger_hole_cutter(hole: FingerHole, board: BoardConfig, board_center:
 | shape | 几何 | z 范围 |
 |---|---|---|
 | `scoop` | **斜坡楔块**：在槽壁开口处切一块三棱柱，坡顶在 `top_z`、坡底 = 槽底 `top_z − depth`，竖直落差 = 生效 `depth`，水平进深 `run = depth / tan(scoopAngleDeg)`，`scoopWidth` 是**沿槽壁方向的坡宽**（不参与进深），`scoopDir` 由编辑器的旋转手柄给出。**三条边界见本节末** | 底面 `top_z − depth`（= 槽底），顶面 `top_z + 0.01` |
-| `sphere` | **球缺**：`r = min(radius, depth, top_z - 1)`，`centerZ = top_z - depth + r`，球体与 `z >= 0` 求交。**开口守卫（原缺，会重演 F1 的密闭内腔）**：`assert centerZ + r > top_z + 0.1`——`radius < depth/2` 时珠顶会掉到板顶以下，生成完全封闭的空腔，水密+体积+`slot_open` 全绿而手根本伸不进去。**`sphere` 只允许 `blind`**（`through` 时球底恒 ≥ 1、满足不了 `≤ −0.5`，会必红） | 从顶面下探到 `top_z - depth`，**不得穿透板底**：断言 `abs(bounding_box()[0][2] − (top_z − depth)) <= 0.01`（**原来的 `>= 0` 恒真**：球底 = `centerZ − r = top_z − depth`，而 `depth ≤ top_z` 必然成立，等于没查） |
+| `sphere` | **球缺**：`r = min(radius, depth, top_z - 1)`，`centerZ = top_z - depth + r`，球体与 `z >= 0` 求交。**开口守卫（原缺，会重演 F1 的密闭内腔）**：`assert centerZ + r > top_z + 0.1`——`radius < depth/2` 时珠顶会掉到板顶以下，生成完全封闭的空腔，水密+体积+`slot_open` 全绿而手根本伸不进去。**`sphere` 只允许 `blind`**（`through` 时球底恒 ≥ 1、满足不了 `≤ −0.5`，会必红） | 从顶面下探到 `top_z - depth`，**不得穿透板底**：断言 `abs(bounding_box()[2] − (top_z − depth)) <= 0.01`（**原来的 `>= 0` 恒真**：球底 = `centerZ − r = top_z − depth`，而 `depth ≤ top_z` 必然成立，等于没查） |
 | `cylinder` | `Manifold.cylinder(r, h)` | `[top_z - depth, top_z + 1]` |
 | `square`/`rect` | `Manifold.cube([w, h, depth+1])` 绕 Z 旋转 | 同上 |
 | `filleted_rect` | X/Z 剖面扫掠（圆底角半径 = `min(w/3, depth/2)`） | 同上（`blind`；`through` 时下界 −1） |
@@ -890,8 +890,8 @@ def build_finger_hole_cutter(hole: FingerHole, board: BoardConfig, board_center:
 
 | 判据（连续，两种外形共用） | 手孔形态 | 理由 | 机检断言 |
 |---|---|---|---|
-| **`depth < FINGER_REACH_MM(20)`**（矩形 6/12 板 `≤ 4/10`；gridfinity **3U 只有 14.25**——4U 的 21.25 已 ≥ 20，落在下一行） | `scoop` 斜坡（几何见上表 `scoop` 行）：落差 = **生效 `depth`**，坡底 = **槽底** `z = top_z − depth` | 手指要够到工具**底面**才能捏住侧壁；生效 `depth`（= `depthOverride ?? embedDepth`）就是板顶到槽底的距离，不够 20mm 时竖直孔伸到底也够不到 | ① `abs(scoop.bounding_box()[0][2] − (top_z − depth)) ≤ 0.01`（**用生效 `depth`，不是 `embedDepth`**——`depthOverride` 非空时两者不同，坡底会对不上槽底）；② **连通性用 3D 求交**：`(scoop_cutter ^ pocket_cutter).volume() > 0.1`（两者都是 `Manifold`；**不能写 `CrossSection` 求交——2D/3D 不可交，若按 XY 投影解释则正确几何恒为 0，断言恒假**） |
-| **`depth ≥ FINGER_REACH_MM(20)`**（矩形 25 板可选；gridfinity **4U 21.25 / 6U 35.25** 都 ≥ 20——不是「必须 6U」） | `cylinder` / `sphere` 竖直孔 | 板够厚，指尖能下探到工具底面以下 | **按 `depthMode` 分两条**：`blind` → `abs(hole.bounding_box()[0][2] − (top_z − depth)) ≤ 0.01`；`through` → `hole.bounding_box()[0][2] ≤ −0.5`。**原式「≤ 0.1 = 真的贯穿」是自毁的**：合法 blind 孔孔底在 `top_z − depth > 0`，按原式必红、只有打穿才绿 |
+| **`depth < FINGER_REACH_MM(20)`**（矩形 6/12 板 `≤ 4/10`；gridfinity **3U 只有 14.25**——4U 的 21.25 已 ≥ 20，落在下一行） | `scoop` 斜坡（几何见上表 `scoop` 行）：落差 = **生效 `depth`**，坡底 = **槽底** `z = top_z − depth` | 手指要够到工具**底面**才能捏住侧壁；生效 `depth`（= `depthOverride ?? embedDepth`）就是板顶到槽底的距离，不够 20mm 时竖直孔伸到底也够不到 | ① `abs(scoop.bounding_box()[2] − (top_z − depth)) ≤ 0.01`（**用生效 `depth`，不是 `embedDepth`**——`depthOverride` 非空时两者不同，坡底会对不上槽底）；② **连通性用 3D 求交**：`(scoop_cutter ^ pocket_cutter).volume() > 0.1`（两者都是 `Manifold`；**不能写 `CrossSection` 求交——2D/3D 不可交，若按 XY 投影解释则正确几何恒为 0，断言恒假**） |
+| **`depth ≥ FINGER_REACH_MM(20)`**（矩形 25 板可选；gridfinity **4U 21.25 / 6U 35.25** 都 ≥ 20——不是「必须 6U」） | `cylinder` / `sphere` 竖直孔 | 板够厚，指尖能下探到工具底面以下 | **按 `depthMode` 分两条**：`blind` → `abs(hole.bounding_box()[2] − (top_z − depth)) ≤ 0.01`；`through` → `hole.bounding_box()[2] ≤ −0.5`。**原式「≤ 0.1 = 真的贯穿」是自毁的**：合法 blind 孔孔底在 `top_z − depth > 0`，按原式必红、只有打穿才绿 |
 | **Gridfinity** | **不单独判档**：`depth` 的 clamp 上界是 `heightU*7 − 4.75 − 2`（3U 14.25 / 4U 21.25 / 6U 35.25），直接用这个 `depth` 套同一判据 | 判据与外形无关；3U 得 **14.25** < 20 → scoop；4U 得 21.25 ≥ 20 → 可选竖直孔；6U 得 **35.25** ≥ 20 → 可选竖直孔 | 同上两条 |
 
 - **禁止**在 `depth < FINGER_REACH_MM` 时提供竖直孔选项；UI 的形状选择器按 **`depth`（= `depthOverride ?? embedDepth`）** 过滤（**不是按板厚，也不是按原始 `embedDepth`**——`depthOverride` 可以把 8mm 的板挖成 22mm 深，那时判据必须跟着 `depthOverride` 走）。判据是连续的、矩形与 Gridfinity 共用同一套，因此**不存在任何空档**——v1.1 按板厚分档时 Gridfinity 3U 的「等效厚度 16.25」落进 12–25 之间，是真实存在的 bug（第三轮审核 P0-1）；v1.2 虽已改判据，但几何仍按 `thickness − depth` 写、gridfinity 上整体错位 9mm（第四轮审核 N1/P0）。**v1.3 起判据与几何统一用 `embedDepth` + `top_z`。**
@@ -1010,14 +1010,29 @@ msp.add_text(f"{tool.name} 深 {depth}mm", dxfattribs={"height": 3.0}).set_place
 # 合成 100×20mm 矩形 → generate → 三条断言
 top_z     = THICKNESS_TEST                                        # 合成件：rect 板 → top_z = thickness
 clearance = 0.0                                                   # **必须显式置 0**：§3.1 默认 0.4，槽长会变 100.8、下面第③条必红
-assert cutter.bounding_box()[1][2] > top_z + 0.9                  # ① 切刀确实刺出顶面（manifold3d 的接口是 bounding_box()）
-first_hit = mesh.ray.intersects_location(
-    origin=[0.0, 0.0, top_z + 10.0], direction=[0.0, 0.0, -1.0])[0][0][2]
-assert abs(first_hit - (top_z - depth)) < 0.05           # ② 首击在槽底，不在顶面（射线要落在槽内部，不能落在角顶点）
-assert abs(pocket_length_mm - 100.0) < 0.1                           # ③ 尺寸对（§10.3：±0.1，不是 ±1）
+# bounding_box() 返回扁平 6 元组 (minx,miny,minz,maxx,maxy,maxz)；[5] = maxZ
+assert cutter.bounding_box()[5] > top_z + 0.9                       # ① 切刀确实刺出顶面
+# trimesh raycast 参数名是 ray_origins / ray_directions（不是 origin/direction）
+# 返回的 loc 不按距离排序，首击高度取 z 最大者（= 槽底，不是板底）
+loc, _, _ = mesh.ray.intersects_location(
+    ray_origins=[[0.0, 0.0, top_z + 10.0]],
+    ray_directions=[[0.0, 0.0, -1.0]])
+assert len(loc) > 0
+first_hit = max(float(p[2]) for p in loc)
+assert abs(first_hit - (top_z - depth)) < 0.05                     # ② 首击在槽底，不在顶面（射线要落在槽内部，不能落在角顶点）
+assert abs(pocket_length_mm - 100.0) < 0.1                          # ③ 尺寸对（§10.3：±0.1，不是 ±1）
 ```
 
+**⚠️ API 事实（manifold3d 3.5.4 / trimesh 5.2.0 实测）**：`Manifold.bounding_box()` 是**扁平 6 元组**，`[1][2]` 会 `TypeError`；`CrossSection.bounds()` 是扁平 4 元组；`intersects_location` 用 `ray_origins`/`ray_directions` 关键字，且 `loc` **不按距离排序**（实测 `loc[0]` 可能是板底 `z=0`、`loc[1]` 才是槽底 `z=top_z−depth`），故必须 `max(p[2])`。`rtree` 是 `trimesh.ray` 的隐式依赖（见 §11.2），缺了报 `ModuleNotFoundError: No module named 'rtree'`。
+
 ② 是 F1 的**唯一**可靠证据：密闭空腔的首击会落在 `z = top_z`（rect 时 = `thickness`）。没有这条断言，`success + volume>0` 会把错误固定下来。
+
+**⚠️ 实测补充（2026-11-05，板 `160×80×12` / 槽 `100×20`）**：
+
+- **射线必须打盲槽，不能打贯穿槽**。盲槽切刀 `z ∈ [6,13]` → `loc` 有 2 个命中 `[0.0, 6.0]`，`max = 6.0 = top_z − embed` ✅；贯穿切刀 `z ∈ [-4,12]` → `loc = []` 空（射线从孔里穿过去）。**射线打空的第一排查项不是库，而是「槽是不是被切成通孔了」**，同时看 `bb[5] − top_z` 是否 > 0.9。
+- `loc` **不按距离排序**（实测板底 `0.0` 排在槽底 `6.0` 前面），必须 `max(p[2] for p in loc)`，不能 `loc[0][2]`。
+- **「顶面在槽投影区域是空的」用截面环数判，不用射线**：在 `z = top_z − 0.01` 处 `mesh.section(plane_normal=[0,0,1], plane_origin=[0,0,z])` → `to_2D()` → 数**中心落在槽投影多边形内部**的闭环数。盲槽 = **1 个内环** ✅；不切 = **0 个内环** ✅。注意 `p2d.bounds` 恒为板外接框（`[-80,-40]..[80,40]`），**不能用 bounds 判开口**，必须逐环取 `Polygon(pts).centroid`。
+- `trimesh` 5.2.0 **没有** `section_plane`（`hasattr == False`），只有 `section(plane_normal=, plane_origin=)`。
 
 | 类型 | 数量 | 内容 |
 |---|---|---|
@@ -1077,9 +1092,9 @@ docs/planning/
    python3 -m venv .venv          # 不要用 sudo 建，否则 venv 归 root
    . .venv/bin/activate
    pip install -r python_backend/requirements.txt
-   python -c "import numpy,shapely,manifold3d,trimesh,cv2,skimage,ezdxf"   # 必须全绿再开 M-1
+   python -c "import numpy,shapely,manifold3d,trimesh,cv2,skimage,ezdxf,rtree"   # 必须全绿再开 M-1
    ```
-   实测已通过：`python3 -m venv /tmp/tv2` OK（Python 3.14.4）、`pip install numpy` OK（2.5.4）。依赖齐全后先跑 `python -c "import numpy,shapely,manifold3d,trimesh,cv2,skimage,ezdxf"`，**任何 ImportError 都必须在 M-1 之前解决**（3.14 的 wheel 覆盖度是主要风险；`opencv-python-headless` 必须用 headless 版，否则 `main.py:4` 的顶层 `import cv2` 会因缺 `libGL.so.1` 直接崩）。
+   实测已通过：`python3 -m venv /tmp/tv2` OK（Python 3.14.4）、`pip install numpy` OK（2.5.4）。依赖齐全后先跑 `python -c "import numpy,shapely,manifold3d,trimesh,cv2,skimage,ezdxf,rtree"`（**`rtree` 已实测为必需**：`trimesh.ray.intersects_location` 依赖它，缺了直接 `ModuleNotFoundError`；已装 1.4.1），**任何 ImportError 都必须在 M-1 之前解决**（3.14 的 wheel 覆盖度是主要风险；`opencv-python-headless` 必须用 headless 版，否则 `main.py:4` 的顶层 `import cv2` 会因缺 `libGL.so.1` 直接崩）。
    **两个坑**：① `curl https://pypi.org/simple/` 会超时（IPv6 优先/探测受限），但 **`pip` 能正常下载**——别拿 curl 当出网判据；② 从 Windows 侧 `wsl -d Ubuntu <cmd>` 调用时若 cwd 在 `/mnt/d/...` 会打印 `chdir(...) failed 5`，无害，先 `cd ~` 可消除。
 4. **必须 headless 版 opencv**：`main.py:4` 顶层 `import cv2`，非 headless 版在无 X 的 WSL 里会撞 `libGL.so.1`。
 
@@ -1097,6 +1112,7 @@ scikit-image>=0.25
 ezdxf>=1.3
 pillow>=11
 pytest>=8.3
+rtree>=1.2                    # trimesh.ray 的隐式依赖；缺了 intersects_location 报 ModuleNotFoundError
 ```
 
 > `trimesh` 导出 3MF 才需要 `networkx`/`lxml`，而 3MF 已砍（计划 §5），**不要装**。
@@ -1150,9 +1166,9 @@ git tag pre-m0
 
 ### 12.3 审核 agent 的固定检查项
 
-- 有没有出现 `840`、`1188`、`±H/2`、`H/2`、`localhost:8001`、`bounding_box` 之外的 bbox 写法（`bounds()[1][2]` 对 `Manifold` 不成立，`CrossSection` 才有 `bounds()`）
+- 有没有出现 `840`、`1188`、`±H/2`、`H/2`、`localhost:8001`、**`bounding_box()[1][2]` / `bb[1][2]` 这类错误下标**（`Manifold.bounding_box()` 是扁平 6 元组，`[5]`=maxZ / `[2]`=minZ；`CrossSection.bounds()` 是扁平 4 元组）
 - 有没有在 `geometry/` 里 import `cv2`
-- 切刀出顶量 `bb[1][2] - top_z` 是否落在 `[0.9, 1.0]`（rect 时 `top_z = thickness`；**gridfinity 上写 `thickness` 就是错的**）
+- 切刀出顶量 `bb[5] - top_z` 是否落在 `[0.9, 1.0]`（rect 时 `top_z = thickness`；**gridfinity 上写 `thickness` 就是错的**）
 - 内孔是否走了 `FillRule.EvenOdd`
 - 有没有 `except: print(...)`（禁止吞异常）
 - 有没有未归一化的绕向直接送进 `CrossSection`
