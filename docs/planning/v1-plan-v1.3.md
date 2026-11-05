@@ -450,7 +450,7 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 **状态：计划与 SDS 均已定稿（v1.3），六轮独立审核收敛，环境已验证可用（WSL venv），可开工。**
 
 1. ~~用户拍板 Q5~~ **已决（用户 m02193）**：板尺寸与工具数量无关，`sizeMode` 三选一（`fit-tools` / `custom` / `print-bed`）。Q1–Q7 全部已决，**无待定项**。
-2. ~~开工第一件事 —— 建可回滚基线~~ **已完成（2026-11-05）**：`git rm -r --cached node_modules && git add -A && git commit && git tag pre-m0`。基线提交 `68f950b`、tag `pre-m0` 指向当前 HEAD、工作区干净；`node_modules` 10367 文件与 20 个 `.pyc` 已停止跟踪（仍在磁盘），`.gitignore` 补了 `.venv/` / `__pycache__/` / `*.pyc`。**新会话不必再做这一步**，直接从 M-1 开始。
+2. ~~开工第一件事 —— 建可回滚基线~~ **已完成（2026-11-05）**：`git rm -r --cached node_modules && git add -A && git commit && git tag pre-m0`。基线提交 `68f950b`、tag `pre-m0` 指向当前 HEAD、工作区干净；`node_modules` 10367 文件与 20 个 `.pyc` 已停止跟踪（仍在磁盘），`.gitignore` 补了 `.venv/` / `__pycache__/` / `*.pyc` / `.claude/`。**新会话不必再做这一步**，直接从 M-1 开始。
 3. **按 `docs/planning/v1-sds-v1.3.md` 实施**：主会话调度 + 子 agent 编码 + 独立审核。
    - 先跑 M-1（0.5d，`scripts/smoke_geometry.py` 三条断言）—— 它同时证明环境能跑、F1 的开口为真、DoD 可离线复现。没有它，后面每条 DoD 都可能被"静默失败"骗过。
    - M0 内部**不是全并行**：批 1 = `0.1` ∣ `0.2`+`0.7`+`0.8`；批 2 = `0.4` → `0.3`+`0.3b` → `0.5` → `0.6`（严格串行）。
@@ -501,4 +501,4 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 
 - 计划 §7 的 Q1–Q7 全部已决；**无待定项**。
 - `scripts/smoke_geometry.py` 三条断言（M-1）尚未编写——由新会话的 M-1 子 agent 交付。
-- 仓库 git 基线已建（基线提交 `68f950b`，tag `pre-m0` → 当前 HEAD），工作区干净；`node_modules` / `.venv` / `__pycache__` 已在 `.gitignore` 中。**无需再清理**。
+- 仓库 git 基线已建（基线提交 `68f950b`，tag `pre-m0` → 当前 HEAD），工作区干净；`node_modules` / `.venv` / `__pycache__` / `.claude/` 已在 `.gitignore` 中。**无需再清理**。
