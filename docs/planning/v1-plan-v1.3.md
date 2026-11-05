@@ -450,7 +450,7 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 **状态：计划与 SDS 均已定稿（v1.3），六轮独立审核收敛，环境已验证可用（WSL venv），可开工。**
 
 1. ~~用户拍板 Q5~~ **已决（用户 m02193）**：板尺寸与工具数量无关，`sizeMode` 三选一（`fit-tools` / `custom` / `print-bed`）。Q1–Q7 全部已决，**无待定项**。
-2. **开工第一件事 —— 建可回滚基线**：`git rm -r --cached node_modules && git add -A && git commit -m "chore: untrack node_modules, checkpoint before v1" && git tag pre-m0`。当前 `HEAD = d487eae`、工作区 79 项未提交、`node_modules` 被跟踪 **10369** 个文件、无任何 tag；不做这一步，M0 一旦出问题无法回退。
+2. ~~开工第一件事 —— 建可回滚基线~~ **已完成（2026-11-05）**：`git rm -r --cached node_modules && git add -A && git commit && git tag pre-m0`。基线提交 `68f950b`（tag `pre-m0`）、工作区干净；`node_modules` 10367 文件与 20 个 `.pyc` 已停止跟踪（仍在磁盘），`.gitignore` 补了 `.venv/` / `__pycache__/` / `*.pyc`。**新会话不必再做这一步**，直接从 M-1 开始。
 3. **按 `docs/planning/v1-sds-v1.3.md` 实施**：主会话调度 + 子 agent 编码 + 独立审核。
    - 先跑 M-1（0.5d，`scripts/smoke_geometry.py` 三条断言）—— 它同时证明环境能跑、F1 的开口为真、DoD 可离线复现。没有它，后面每条 DoD 都可能被"静默失败"骗过。
    - M0 内部**不是全并行**：批 1 = `0.1` ∣ `0.2`+`0.7`+`0.8`；批 2 = `0.4` → `0.3`+`0.3b` → `0.5` → `0.6`（严格串行）。
@@ -473,6 +473,7 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 | 历史版本归档 | `docs/planning/archive/`（11 份） |
 | 许可证 | 项目根 `LICENSE` = **MIT**（`Copyright (c) 2026 Toolmanagement-web`），与 tracefinity MIT 兼容；移植需按计划 §6 加 `NOTICE` |
 | `python_backend/requirements.txt` | **已按 SDS §11.2 重写**（去掉 `cadquery==2.8.0` / `numpy==1.24.3` / `opencv-python==4.9.0.80` 三个在 Python 3.14 上无 wheel 的硬 pin，改 `>=` 下限 + `opencv-python-headless`） |
+| Git 可回滚基线 | **已建**：基线提交 `68f950b`（`chore: untrack node_modules and bytecode, checkpoint before v1`），**tag `pre-m0`** 指向它；`node_modules` 10367 文件与 20 个 `.pyc` 已停止跟踪（文件仍在磁盘），工作区干净 |
 | WSL 环境 | **已验通**：`python3 -m venv .venv`（Python 3.14.4）→ `pip install -r python_backend/requirements.txt` → `.venv/bin/python -c "import numpy,shapely,manifold3d,trimesh,cv2,skimage,ezdxf,fastapi,uvicorn,pytest"` **全绿**（numpy 2.5.4 / shapely 2.2.0 / manifold3d 3.5.4 / trimesh 5.2.0 / cv2 5.0.0 / skimage 0.26.0 / ezdxf 1.4.5）。`python3.14-venv` / `python3-pip` 已 apt 装通 |
 
 ### 9.2 新会话启动口令（可直接复制）
@@ -485,7 +486,7 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 每完成一个里程碑：开 1 个独立审核 agent（不复用实施 agent 上下文），按 §12.3 固定检查项逐条核；任一项不过即打回，不合并。
 子 agent 交付格式按 §12.2（改动文件绝对路径 + 关键行号 + 跑过的命令与输出 + 未完成项）。
 铁律：任何判据与用到它的几何必须共用同一个局部量（top_z / depth / clearance / chamfer，见 §7.3）。
-开工第一件事：git rm -r --cached node_modules && git add -A && git commit -m "chore: untrack node_modules, checkpoint before v1" && git tag pre-m0
+基线已建（基线提交 68f950b / tag pre-m0，工作区干净），直接从 M-1 开始；不要重复清理 git
 ```
 
 ### 9.3 环境注意事项（交接给新会话）
@@ -500,4 +501,4 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 
 - 计划 §7 的 Q1–Q7 全部已决；**无待定项**。
 - `scripts/smoke_geometry.py` 三条断言（M-1）尚未编写——由新会话的 M-1 子 agent 交付。
-- 仓库 git 工作区有 79 项未提交、`node_modules` 被跟踪 10369 个文件、无 tag；§9.2 的口令第一步就是清基线。
+- 仓库 git 基线已建（基线提交 `68f950b` / tag `pre-m0`），工作区干净；`node_modules` / `.venv` / `__pycache__` 已在 `.gitignore` 中。**无需再清理**。
