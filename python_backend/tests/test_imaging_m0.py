@@ -23,14 +23,14 @@ import cv2
 import numpy as np
 import pytest
 
-# pytest 的 console script 不会把 cwd 加进 sys.path（没有 conftest.py），
-# 这里显式加项目根，保证 `import python_backend.imaging` 成立。
-_ROOT = Path(__file__).resolve().parents[2]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+# 统一导入根 = python_backend/（与 `cd python_backend && uvicorn main:app` 一致）。
+# pytest 的 console script 不会把 cwd 加进 sys.path（没有 conftest.py），显式加。
+_BACKEND = Path(__file__).resolve().parents[1]
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
 
-from python_backend.domain.models import BoardConfig  # noqa: E402
-from python_backend.imaging import (  # noqa: E402
+from domain.models import BoardConfig  # noqa: E402
+from imaging import (  # noqa: E402
     MM_PER_PX,
     PX_PER_MM,
     canvas_px_for,
@@ -42,11 +42,11 @@ from python_backend.imaging import (  # noqa: E402
     paper_rect_px_for,
     pick_paper_orientation,
 )
-from python_backend.imaging.api import (  # noqa: E402
+from imaging.api import (  # noqa: E402
     correct_image_response,
     encode_png_base64,
 )
-from python_backend.imaging.perspective import _quad_aspect_ratio  # noqa: E402
+from imaging.perspective import _quad_aspect_ratio  # noqa: E402
 
 # 画布常量（SDS §2.2），测试里硬编码一遍，防止有人改了实现又改断言
 A4_PORTRAIT_CANVAS = (2400, 3270)
@@ -281,11 +281,11 @@ def test_dod3_no_module_outside_imaging_reads_mm_per_px():
         "mm" + "_per_" + "px",    # mm_per_px（SDS §2.2 的说法）
         "MM" + "_PER_" + "PX",    # MM_PER_PX（Python 常量）
     ]
-    imaging_dir = _ROOT / "python_backend" / "imaging"
-    tests_dir = _ROOT / "python_backend" / "tests"
+    imaging_dir = _BACKEND / "imaging"
+    tests_dir = _BACKEND / "tests"
     hits: list[str] = []
     scanned = 0
-    for path in sorted((_ROOT / "python_backend").rglob("*.py")):
+    for path in sorted((_BACKEND).rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
         if imaging_dir in path.parents or tests_dir in path.parents:
@@ -295,12 +295,12 @@ def test_dod3_no_module_outside_imaging_reads_mm_per_px():
         for lineno, line in enumerate(text.splitlines(), 1):
             for tok in tokens:
                 if tok in line:
-                    hits.append(f"{path.relative_to(_ROOT)}:{lineno}: {line.strip()}")
+                    hits.append(f"{path.relative_to(_BACKEND.parent)}:{lineno}: {line.strip()}")
     assert scanned > 0, "没扫到任何文件，grep 失效"
 
     # 点名：即使落在被排除的目录里也照样受检
-    named = [_ROOT / "python_backend" / n for n in ("cad_engine.py", "main.py", "models.py")]
-    named += sorted((_ROOT / "python_backend" / "geometry").rglob("*.py"))
+    named = [_BACKEND / n for n in ("cad_engine.py", "main.py", "models.py")]
+    named += sorted((_BACKEND / "geometry").rglob("*.py"))
     for path in named:
         if not path.exists():
             continue
@@ -308,14 +308,14 @@ def test_dod3_no_module_outside_imaging_reads_mm_per_px():
         for lineno, line in enumerate(text.splitlines(), 1):
             for tok in tokens:
                 if tok in line:
-                    hits.append(f"{path.relative_to(_ROOT)}:{lineno}: {line.strip()}")
+                    hits.append(f"{path.relative_to(_BACKEND.parent)}:{lineno}: {line.strip()}")
 
     assert hits == [], "imaging/ 之外有生产模块在读 mmPerPx：\n" + "\n".join(hits)
 
 
 def test_dod3_downstream_consumes_mm_only():
     """③ 补：下游换算只能走 `mm = px / PX_PER_MM` 这条常量关系。"""
-    from python_backend.imaging.constants import SAFE_MARGIN_MM
+    from imaging.constants import SAFE_MARGIN_MM
 
     for w_mm, h_mm in ((210.0, 297.0), (297.0, 210.0), (215.9, 279.4)):
         cw, ch = canvas_px_for(w_mm, h_mm)
@@ -527,7 +527,7 @@ def test_detect_paper_response_shape(normal_portrait_photo):
     ★ 关键：`corners` 下发的是**纸面毫米的规范位置**，不是源图像素——
       前端不做像素换算，源图坐标不下发（SDS §4.1 明文要求）。
     """
-    from python_backend.imaging.api import detect_paper_response
+    from imaging.api import detect_paper_response
 
     payload = detect_paper_response(encode_png(normal_portrait_photo), "a4")
     assert payload["orientation"] == "portrait"
@@ -547,7 +547,7 @@ def test_detect_paper_response_shape(normal_portrait_photo):
 
 def test_detect_paper_response_landscape(normal_landscape_photo):
     """横放照片：规范 corners 用 297×210，orientation='landscape'。"""
-    from python_backend.imaging.api import detect_paper_response
+    from imaging.api import detect_paper_response
 
     payload = detect_paper_response(encode_png(normal_landscape_photo), "a4")
     assert payload["orientation"] == "landscape"
@@ -556,7 +556,7 @@ def test_detect_paper_response_landscape(normal_landscape_photo):
 
 def test_paper_not_found_raises_imaging_error():
     """找不到纸必须抛 `ImagingError('PAPER_NOT_FOUND')`，不许返回空响应。"""
-    from python_backend.imaging.api import ImagingError, correct_image_response
+    from imaging.api import ImagingError, correct_image_response
 
     blank = np.zeros((400, 400, 3), np.uint8)  # 全黑，没有纸
     with pytest.raises(ImagingError) as excinfo:
@@ -566,7 +566,7 @@ def test_paper_not_found_raises_imaging_error():
 
 def test_bad_image_bytes_raises_imaging_error():
     """不是图片的字节必须抛 `IMAGE_DECODE_FAILED`（静默失败收口）。"""
-    from python_backend.imaging.api import ImagingError, decode_image
+    from imaging.api import ImagingError, decode_image
 
     with pytest.raises(ImagingError) as excinfo:
         decode_image(b"not an image at all")

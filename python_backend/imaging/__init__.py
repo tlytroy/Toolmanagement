@@ -16,14 +16,14 @@
 """
 from __future__ import annotations
 
-from python_backend.imaging.api import (
+from imaging.api import (
     ImagingError,
     correct_image_response,
     decode_image,
     detect_paper_response,
     encode_png_base64,
 )
-from python_backend.imaging.constants import (
+from imaging.constants import (
     MM_PER_PX,
     PX_PER_MM,
     SAFE_MARGIN_MM,
@@ -32,13 +32,13 @@ from python_backend.imaging.constants import (
     paper_origin_px,
     paper_rect_px_for,
 )
-from python_backend.imaging.paper import detect_paper_corners, order_corners
-from python_backend.imaging.perspective import (
+from imaging.paper import detect_paper_corners, order_corners
+from imaging.perspective import (
     CorrectionResult,
     correct_perspective,
     pick_paper_orientation,
 )
-from python_backend.imaging.photo_checks import (
+from imaging.photo_checks import (
     PhotoWarning,
     check_photo,
     check_photo_from_image,

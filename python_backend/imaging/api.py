@@ -18,14 +18,14 @@ import binascii
 import cv2
 import numpy as np
 
-from python_backend.imaging.constants import MM_PER_PX, paper_mm
-from python_backend.imaging.paper import detect_paper_corners
-from python_backend.imaging.perspective import (
+from imaging.constants import MM_PER_PX, paper_mm
+from imaging.paper import detect_paper_corners
+from imaging.perspective import (
     CorrectionResult,
     correct_perspective,
     pick_paper_orientation,
 )
-from python_backend.imaging.photo_checks import check_photo
+from imaging.photo_checks import check_photo
 
 
 class ImagingError(ValueError):

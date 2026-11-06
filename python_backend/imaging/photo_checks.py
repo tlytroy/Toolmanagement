@@ -33,7 +33,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 
-from python_backend.imaging.constants import paper_mm
+from imaging.constants import paper_mm
 
 logger = logging.getLogger(__name__)
 

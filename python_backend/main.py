@@ -150,7 +150,7 @@ def image_to_base64(image_array: np.ndarray) -> str:
 
 @app.get("/")
 async def root():
-    return {"message": "Tool Management Backend API"}
+    return _ok({"message": "Tool Management Backend API"})
 
 @app.post("/detect-paper")
 async def detect_paper(file: UploadFile = File(...)):

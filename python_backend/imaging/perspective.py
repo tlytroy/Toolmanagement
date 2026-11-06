@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from python_backend.imaging.constants import (
+from imaging.constants import (
     MM_PER_PX,
     PX_PER_MM,
     canvas_px_for,

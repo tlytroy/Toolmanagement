@@ -41,16 +41,10 @@ import numpy as np
 import pytest
 import trimesh
 
-# ★ 两条导入根都要：`geometry/` 是裸导入（`from domain.models import ...`），
-#   `imaging/` 是包导入（`from python_backend.imaging.api import ...`）。
-#   两个包互不 import，所以不会出现「同一个模块加载两份」的问题；
-#   但 `domain.models` 可能被 `python_backend.domain.models` 再加载一份，
-#   因此本文件**只用裸路径的 `domain.models`**，不混用。
-_ROOT = Path(__file__).resolve().parents[2]
+# 统一导入根 = python_backend/（所有模块都用裸导入），只塞这一条。
 _BACKEND = Path(__file__).resolve().parents[1]
-for _p in (str(_ROOT), str(_BACKEND)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
 
 from domain.models import BoardConfig, Project, Tool, Vec2  # noqa: E402
 from geometry import board_center, generate_insert  # noqa: E402
@@ -384,7 +378,7 @@ def test_golden_synthetic_photo_to_stl_mm_chain() -> None:
     这条测的是「毫米链 + 几何」这一段（0.3 的验收）：不论 cv2 分割给出什么轮廓，
     进几何引擎之后 STL 里的槽必须还是那个尺寸，不许被缩放。
     """
-    from python_backend.imaging import correct_image_response
+    from imaging import correct_image_response
     from sam_tool_contour import extract_tool_contours_v26
 
     truth = [(30.0, 40.0), (130.0, 40.0), (130.0, 100.0), (30.0, 100.0)]  # 100×60
@@ -433,7 +427,7 @@ def test_golden_synthetic_photo_absolute_size_known_defect() -> None:
       - 把实测的 3.4mm 偏差钉在代码里，任何改动让它变大都会 XPASS 失败；
       - 让「端到端 ±0.5mm」这条 DoD 的缺口在 CI 里可见，而不是躺在文档里。
     """
-    from python_backend.imaging import correct_image_response
+    from imaging import correct_image_response
     from sam_tool_contour import extract_tool_contours_v26
 
     truth_w, truth_h = 100.0, 60.0

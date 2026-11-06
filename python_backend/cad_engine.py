@@ -44,8 +44,8 @@ STACK_CLEARANCE = 0.2            # 堆叠间隙 (mm)，防止过紧
 # 禁止任何按纸边长度 / 底板尺寸 / 画布尺寸动态推导的比例 —— F1 的根因就是
 # 按板尺寸把轮廓重新缩放去「铺满底板」的写法（见 git 历史里的 F1）。
 # 与 `imaging/constants.py` 的 PX_PER_MM 同值；这里不 import 它，因为
-# `imaging/__init__.py` 用的是 `from python_backend.imaging.api import ...` 绝对导入，
-# 在 `cd python_backend` 口径下会 ModuleNotFoundError。
+# 全仓统一以 `python_backend/` 为导入根（`cd python_backend && uvicorn main:app`），
+# 新模块用裸导入；本文件仍冻结，不 import 任何新包。
 # ★ 只定义正向常量 PX_PER_MM。反向常量（0.1）由 `imaging/constants.py` 独占持有：
 #   imaging 的 DoD ③ 禁止 imaging/ 之外的生产模块出现那个名字（纯文本扫描），
 #   这里要用就现写 `1.0 / PX_PER_MM`，不要另立常量。
@@ -458,7 +458,10 @@ def _auto_detect_finger_slots(
     mean = np.mean(points, axis=0)
     centered = points - mean
     cov = np.cov(centered.T)
-    eig_vals, eig_vecs = np.linalg.eig(cov)
+    # numpy 2.x: eig 对实对称 cov 仍返回 complex128，会让下游 slot 坐标变复数
+    # 并在 arctan2 抛 TypeError。eigh 专用于 Hermitian，返回实数 float64。
+    # （M0 审核 P0-2 的冻结例外，主会话批准；仅此一行，不改任何逻辑）
+    eig_vals, eig_vecs = np.linalg.eigh(cov)
     main_axis = eig_vecs[:, np.argmax(eig_vals)]
     
     # 投影到主轴，找两端
