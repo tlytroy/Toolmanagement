@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import os
 
-WORKSPACE = r"C:\Users\tlyth\WorkBuddy\2026-07-08-18-46-14"
+WORKSPACE = r"C:\Users\<USER>\WorkBuddy\<SESSION>"
 IMAGES = [
     ("demo.png",              "caliper_v1"),
     ("back_chaikin_hex.png",  "hex_wrench"),

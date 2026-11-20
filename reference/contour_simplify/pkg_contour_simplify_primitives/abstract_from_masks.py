@@ -6,7 +6,7 @@
 import numpy as np
 import cv2, os, sys, json
 
-OUT = "C:/Users/tlyth/WorkBuddy/2026-07-07-14-40-46"
+OUT = "C:/Users/<USER>/WorkBuddy/<SESSION>"
 sys.path.insert(0, OUT)
 from repro_contour_v9 import detect_paper_battery
 

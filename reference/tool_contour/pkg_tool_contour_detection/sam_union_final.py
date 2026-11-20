@@ -9,7 +9,7 @@
 指标: U_px(并集像素) / fast\\U(erode是否啃掉工具) / U∩shadow(阴影泄漏)
 """
 import cv2, numpy as np, os, sys, time
-OUT = "C:/Users/tlyth/WorkBuddy/2026-07-07-14-40-46"
+OUT = "C:/Users/<USER>/WorkBuddy/<SESSION>"
 sys.path.insert(0, OUT)
 from repro_contour_v9 import (
     detect_paper_battery, extract_tool_contour_v9, smooth_closed_spline,

@@ -13,7 +13,7 @@ import numpy as np
 import os
 
 # ── 路径 ───────────────────────────────────────────
-WORKSPACE = r"C:\Users\tlyth\WorkBuddy\2026-07-08-18-46-14"
+WORKSPACE = r"C:\Users\<USER>\WorkBuddy\<SESSION>"
 IMG_PATH = os.path.join(WORKSPACE, "demo.png")
 
 img = cv2.imread(IMG_PATH)

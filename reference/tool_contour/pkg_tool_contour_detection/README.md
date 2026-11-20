@@ -63,7 +63,7 @@ python repro_contour_v9.py     # 只跑 Fast(绿)，无需 torch，快速验证
 
 ## WSL 移植须知
 
-1. **改路径**：两个文件顶部 `OUT = "C:/Users/tlyth/WorkBuddy/2026-07-07-14-40-46"` 改成你 WSL 里的目录，测试图（`test_cal.jpg` / `test_03.jpg` / `test_05.jpg`）和 `sam_vit_b_01ec64.pth` 放进去。
+1. **改路径**：两个文件顶部 `OUT = "C:/Users/<USER>/WorkBuddy/<SESSION>"` 改成你 WSL 里的目录，测试图（`test_cal.jpg` / `test_03.jpg` / `test_05.jpg`）和 `sam_vit_b_01ec64.pth` 放进去。
 2. **无 GPU 也能跑**：`DEVICE` 会自动 `cuda→cpu`，但 SAM CPU 推理慢（单图数秒）。
 3. **只要轮廓不要可视化**：`extract_tool_contour_v9()` 返回 `(union, debug_info, raw_cnt, smooth_cnt)`；并集结果在 `sam_union_final.py` 主循环的 `union_cnt` / `union_smooth`，可直接抽成函数复用。
 

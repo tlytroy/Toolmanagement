@@ -507,7 +507,7 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 
 ### 9.3 环境注意事项（交接给新会话）
 
-- 项目实际在 WSL：`//wsl$/Ubuntu/home/atdoc/projects/playground/toolmanagement-web`（Windows 侧 `Y:` 是它的映射）。
+- 项目实际在 WSL：`//wsl$/Ubuntu<PROJECT_ROOT>`（Windows 侧 `Y:` 是它的映射）。
 - 从 Windows 侧调 WSL 用 `wsl -d Ubuntu bash -lc "cd ~ && <cmd>"`；若 cwd 在 `/mnt/d/...` 会打印 `chdir(...) failed 5`，无害。
 - `curl https://pypi.org/simple/` 会超时但 **`pip` 能正常下载**，不要拿 curl 当出网判据；opencv 的 wheel 约 61MB，慢网下用 `pip install --retries 10 --timeout 180 --resume-retries 30 -r python_backend/requirements.txt`。
 - 验收环境的命令：`.venv/bin/python -c "import numpy,shapely,manifold3d,trimesh,cv2,skimage,ezdxf"` 必须全绿才开 M-1（§11.2）。**本会话已实测全绿**，新会话只需复核一次即可。

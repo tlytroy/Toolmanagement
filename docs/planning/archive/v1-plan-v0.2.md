@@ -3,7 +3,7 @@
 > 日期：2026-11-03 ｜ 基线：`v1-plan-draft.md`(v0.1)
 > 修订依据：两轮独立红队 —— 产品/可用性视角、几何/算法视角（均只读计划，未读代码）
 > 状态：**待你拍板 §9 的 Q1–Q7**
-> 项目路径：WSL `\\wsl$\Ubuntu\home\atdoc\projects\playground\toolmanagement-web`
+> 项目路径：WSL `\\wsl$\Ubuntu\<PROJECT_ROOT>`
 
 ---
 

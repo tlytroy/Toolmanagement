@@ -23,7 +23,7 @@ import os, sys, time
 import numpy as np
 import cv2
 
-ROOT = r"C:\Users\tlyth\WorkBuddy\2026-07-07-14-40-46"
+ROOT = r"C:\Users\<USER>\WorkBuddy\<SESSION>"
 METHOD_NEW = os.path.join(ROOT, "compare", "method_new")
 sys.path.insert(0, ROOT)
 sys.path.insert(0, METHOD_NEW)

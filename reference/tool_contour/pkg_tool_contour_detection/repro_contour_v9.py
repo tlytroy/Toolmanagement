@@ -25,7 +25,7 @@ import os
 import math
 from math import acos, degrees, sqrt
 
-OUT = "C:/Users/tlyth/WorkBuddy/2026-07-07-14-40-46"
+OUT = "C:/Users/<USER>/WorkBuddy/<SESSION>"
 
 
 # ============================================================

@@ -1,7 +1,7 @@
 # Toolmanagement v1 计划（初稿 v0.1）
 
 > 日期：2026-11-03 ｜ 作者：主会话 ｜ 状态：**待拷问（grill）**
-> 项目：`Y:\home\atdoc\projects\playground\toolmanagement-web`（实为 WSL `\\wsl$\Ubuntu\home\atdoc\projects\playground\toolmanagement-web`）
+> 项目：`Y:\<PROJECT_ROOT>`（实为 WSL `\\wsl$\Ubuntu\<PROJECT_ROOT>`）
 
 ---
 
