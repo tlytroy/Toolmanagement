@@ -1,9 +1,12 @@
 """板体：尺寸决策（`board_size_mm`）与实体构造（`build_board`）。
 
-★ `build_board` 的 z 范围恒为 `[0, thickness]`（板底面 z=0），
+★ `build_board` 的 z 范围恒为 `[0, board_top_z(board)]`（板底面 z=0），
   **绝不** `apply_translation([0, 0, -size_z/2])` 居中 —— 那是 F1 的成因。
+  rect: top_z = thickness；gridfinity: top_z = height_u * 7。
 """
 from __future__ import annotations
+
+import math
 
 import numpy as np
 import manifold3d as mf
@@ -44,6 +47,25 @@ def _as_bbox(tools) -> tuple[float, float, float, float]:
     return tools_bbox(tools)
 
 
+def derive_units(size_mode: str, bbox: tuple[float, float, float, float],
+                 margin: float, width_mm: float | None, height_mm: float | None,
+                 print_bed: dict) -> tuple[int, int]:
+    """由 sizeMode 派生 gridfinity 格数（SDS §7.2 表，后端唯一真源，前端只回显）。"""
+    minx, miny, maxx, maxy = bbox
+    if size_mode == "fit-tools":
+        ux = int(math.ceil((maxx - minx + 2.0 * margin) / GRU))
+        uy = int(math.ceil((maxy - miny + 2.0 * margin) / GRU))
+    elif size_mode == "custom":
+        ux = int(math.ceil(float(width_mm) / GRU)) if width_mm else 1
+        uy = int(math.ceil(float(height_mm) / GRU)) if height_mm else 1
+    elif size_mode == "print-bed":
+        ux = int(math.floor((float(print_bed["x"]) - 2.0 * EDGE_MM) / GRU))
+        uy = int(math.floor((float(print_bed["y"]) - 2.0 * EDGE_MM) / GRU))
+    else:
+        raise GeometryError("INVALID_SIZE_MODE", "未知 sizeMode", {"sizeMode": size_mode})
+    return (max(1, ux), max(1, uy))
+
+
 def board_size_mm(board: BoardConfig, tools) -> tuple[float, float]:
     """板尺寸的唯一真源（SDS §3.2 / §7.2）。
 
@@ -72,15 +94,20 @@ def board_size_mm(board: BoardConfig, tools) -> tuple[float, float]:
 
 
 def build_board(board: BoardConfig, size: tuple[float, float]) -> mf.Manifold:
-    """rect：圆角矩形 CrossSection → extrude(thickness)，z ∈ [0, thickness]。
+    """按外形构造板实体，z ∈ [0, board_top_z(board)]（不居中，F1 铁律）。
 
+    rect       : 圆角矩形 CrossSection → extrude(thickness)
+    gridfinity : 底座三段收腰 + 直壁 + 可选堆叠唇环槽 + 可选磁孔（geometry.gridfinity）
     `size` 必须来自 `board_size_mm`（唯一真源），不要在这里重算。
-    gridfinity 的底座/唇剖面属于 M1，M-1 明确不支持。
     """
     if board.shape == "gridfinity":
-        raise GeometryError("NOT_IMPLEMENTED_M1",
-                            "gridfinity 板体属 M1 范围，M-1 只实现 rect",
-                            {"shape": board.shape})
+        from geometry.gridfinity import build_gridfinity_board
+        ux = int(round(float(size[0]) / GRU))
+        uy = int(round(float(size[1]) / GRU))
+        return build_gridfinity_board(
+            units_x=ux, units_y=uy, height_u=int(board.height_u),
+            magnets=bool(board.magnets), stacking_lip=bool(board.stacking_lip),
+        )
 
     w, h = float(size[0]), float(size[1])
     if w <= 0 or h <= 0:
