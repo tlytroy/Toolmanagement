@@ -541,6 +541,17 @@ async def auto_finger_slots(req: AutoFingerSlotsRequest):
         )
 
 
+
+# ── M1-W 接线层：SDS §4 /api/* 端点（新引擎）─────────────
+# 旧 8 个端点全部保留、行为不变；新端点只增不改。GEO_ENGINE=new|legacy 仅记录，
+# 新端点恒用新引擎（见 docs/PROJECT_STATUS.md §4.1）。
+try:
+    from api.routes import router as _api_router
+    app.include_router(_api_router)
+except ImportError as _wire_exc:  # 接线层缺失时旧引擎仍可用，不拖垮服务
+    logger.warning("M1-W /api/* 接线层未加载: %s", _wire_exc)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
