@@ -23,6 +23,9 @@
 >
 > **状态：计划与 SDS 均已达可开工状态。** §7 的 Q1–Q7 **全部已决**（Q5 由用户 m02193 关闭：板尺寸与工具数量无关），**无待定项**。
 > **新会话实施交接见 §9**（启动口令、开工前清单、环境注意事项、遗留项）；SDS 侧对应 §12.4。
+> **实施期规格修订（2026-11-20，用户确认登记为带理由规格变更）**：SDS §1.1 把「`POST /api/generate` 返回可用 STL」记在 M0，但本计划 M0 表格（0.1–0.8）与 SDS §12.1 的 M1 三路分工都没有建端点的任务——六轮审核均未发现。实施期裁决：新增 **M1-W 接线里程碑**（7 个 `/api/*` 端点 + camelCase schema + STL 导出 + `GEO_ENGINE` 开关），作为 **M2 硬前置**；该验收项从 M0 顺延到 M1-W；**M0 判定为 partially complete**（库级 DoD 全绿、旧引擎毫米链已修，端到端项未达）。不回改六轮审核的定稿正文，仅以本说明 + SDS 头部对应说明登记；权威状态见 `docs/PROJECT_STATUS.md`，任务书见 `docs/M1_WIRE_DECISION.md`、`docs/M1_TASKS_3WAY.md`。工期口径不变：M1-W 属 M1 内部接线，不新增人日。
+>
+
 >
 > **v1.2 = v1.1 + 第三轮独立审核（closure / cold-read）修订。**
 > 第三轮：closure 判 15 CLOSED / 7 PARTIAL / 1 MISSING；cold-read 给出 7 条 P0 + 12 条 P1 + 11 条 P2。最严重的三条同源——**手孔形态按板厚分档**，Gridfinity 3U 的「等效厚度 16.25」落进 12–25 的空档、「等效厚度」实为可用腔深（量纲错）、scoop 坡底写成 `thickness − depth` 会把 12mm 板整片切穿。本版改成**单一连续判据 `embedDepth ≥ 20`**，坡底改 `thickness − embedDepth`，改动表见 §3.1 D6'（修订 2）。**⚠️ 这两处是 v1.2 的历史状态，v1.3 已进一步修正**：判据改用**生效 `depth`**（`depthOverride ?? embedDepth`）、坡底改 `top_z − depth`，见修订表 #24 与 D6'（修订 2 已在 v1.3 后被 D6' 现行版取代）。
@@ -358,6 +361,8 @@ tracefinity 的完整解法：`stl_generator_manifold.py:706-750`（`_shapely_to
 > - `trimesh` 5.2.0 **没有** `section_plane` 方法（`hasattr(mesh,'section_plane') == False`），只有 `section(plane_normal=, plane_origin=)`
 
 ### M0 — 让后端能跑 + 打通毫米链（2.5 天）
+
+> **实施期状态：partially complete。** 0.1–0.8 库级 DoD 全部通过（117 passed / 1 xfailed），但 SDS §1.1 端到端验收项「`POST /api/generate` 返回可用 STL」已按用户确认的规格变更顺延至 M1-W；M0 未建任何 `/api/*` 端点。见文档头部实施期规格修订说明。
 
 | # | 任务 | DoD |
 |---|---|---|
