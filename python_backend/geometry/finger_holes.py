@@ -97,6 +97,7 @@ def _filleted_rect_cutter(
 def _scoop_cutter(
     hole: FingerHole, cx: float, cy: float, top_z: float, depth: float,
     *, d_edge: float | None, clearance: float,
+    warnings_out: list[dict] | None = None,
 ) -> mf.Manifold:
     """斜坡楔块：三棱柱，坡顶 top_z+0.01，坡底 top_z-depth，向槽内侵入 0.5mm。"""
     angle = float(hole.scoop_angle_deg)
@@ -112,7 +113,16 @@ def _scoop_cutter(
                 "scoop 无解：坡道方向槽壁到板边距离不足，请增大板尺寸或把工具移离板边",
                 {"dEdge": float(d_edge), "clearance": float(clearance), "requiredRun": run},
             )
-        run = min(run, max_run)
+        if run > max_run:
+            # SDS §7.4：超出 d_edge − clearance 时 clamp 坡长并写 SCOOP_CLAMPED
+            if warnings_out is not None:
+                warnings_out.append({
+                    "code": "SCOOP_CLAMPED",
+                    "message": "scoop 坡长超出槽壁到板边的实测距离，已 clamp",
+                    "detail": {"requiredRun": run, "clampedTo": max_run,
+                               "dEdge": float(d_edge), "clearance": float(clearance)},
+                })
+            run = max_run
 
     # scoop_dir 是纸面(y-down)单位向量 → 板局部(y-up)需翻 y 再归一化
     dx = float(hole.scoop_dir.x)
@@ -144,10 +154,12 @@ def build_finger_hole_cutter(
     *,
     d_edge: float | None = None,
     clearance: float = 0.4,
+    warnings_out: list[dict] | None = None,
 ) -> mf.Manifold:
     """按形态构造单个手孔切刀（板局部 mm，z∈[底, top_z+1]）。
 
     `d_edge` 仅 scoop 使用：坡道方向槽壁到板轮廓的实测距离；None 时不 clamp 坡长。
+    `warnings_out` 接收 SCOOP_CLAMPED 等告警（SDS §7.4）。
     """
     shape = hole.shape
     if shape not in ALL_KINDS:
@@ -169,7 +181,10 @@ def build_finger_hole_cutter(
     through = (hole.depth_mode == "through")
 
     if shape == "scoop":
-        return _scoop_cutter(hole, cx, cy, top_z, depth, d_edge=d_edge, clearance=clearance)
+        return _scoop_cutter(
+            hole, cx, cy, top_z, depth,
+            d_edge=d_edge, clearance=clearance, warnings_out=warnings_out,
+        )
 
     if shape == "sphere":
         if through:
@@ -222,7 +237,32 @@ def build_finger_hole_cutter(
     )
 
 
+def scoop_edge_distance(pocket_shape, board_solid, top_z: float) -> float:
+    """d_edge：槽壁到板轮廓的实测距离（SDS §7.4）。
+
+    `pocket_shape` 是板局部 mm 的 shapely Polygon（已加间隙），`board_solid` 是
+    未开槽板 Manifold。取板顶下方 0.01mm 截面外环，量 `pocket.distance(outline.boundary)`。
+    ★ 不是 `margin`——custom/print-bed 下工具可贴板边，margin 与真实余量无关。
+    """
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    cs = board_solid.slice(top_z - 0.01)
+    rings = cs.to_polygons()
+    if not rings:
+        return 0.0
+    try:
+        polys = [Polygon(r) for r in rings if len(r) >= 3]
+        if not polys:
+            return 0.0
+        boundary = unary_union(polys).boundary
+        return float(pocket_shape.distance(boundary))
+    except Exception:
+        return 0.0
+
+
 __all__ = [
     "FINGER_REACH_MM", "SHOULDER_KINDS", "ALL_KINDS",
     "resolve_finger_depth", "available_shapes", "build_finger_hole_cutter",
+    "scoop_edge_distance",
 ]

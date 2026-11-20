@@ -14,6 +14,7 @@ import manifold3d as mf
 from domain.models import Project
 from geometry.board import board_center, board_size_mm, build_board
 from geometry.constants import board_depth_limit, board_top_z
+from geometry.finger_holes import build_finger_hole_cutter, scoop_edge_distance
 from geometry.pockets import (
     build_pocket_cutter,
     pocket_shape,
@@ -176,12 +177,28 @@ def generate_insert(project: Project, depth: float | None = None) -> dict:
             warnings_out=warnings_out,
         )
         cutters.append(cutter)
+
+        # —— 手孔切刀（SDS §7.4/§7.5）：每个手孔一个 cutter，并入同一次布尔 ——
+        hole_reports: list[dict] = []
+        for fh in tool.finger_holes:
+            d_edge = None
+            if fh.shape == "scoop":
+                # scoop 的 d_edge 必须是实测「槽壁到板轮廓」距离，不是 margin
+                d_edge = scoop_edge_distance(shape, base_uncut, top_z)
+            fh_cutter = build_finger_hole_cutter(
+                fh, board, center,
+                d_edge=d_edge, clearance=clr, warnings_out=warnings_out,
+            )
+            cutters.append(fh_cutter)
+            hole_reports.append({"id": fh.id, "shape": fh.shape})
+
         tool_reports.append({
             "id": tool.id,
             "depth": eff_depth,
             "clearance": clr,
             "chamfer": chamfer,
             "pocket_length_mm": pocket_len,
+            "finger_holes": hole_reports,
         })
 
     slot_cutter = cutters[0]

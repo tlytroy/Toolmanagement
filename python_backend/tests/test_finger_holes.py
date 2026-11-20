@@ -188,3 +188,24 @@ def test_rotation_is_negated_guard():
     """y 镜像使顺逆时针互换：源码必须 `rot = -hole.rotation`（防漏改回归）。"""
     src = (Path(__file__).resolve().parents[1] / "geometry" / "finger_holes.py").read_text(encoding="utf-8")
     assert "rot = -float(hole.rotation)" in src
+
+
+# ── 接线（SDS §7.5）：generate_insert 必须把手孔切刀并入布尔 ──────────
+def test_finger_holes_are_wired_into_generate_insert():
+    """带手孔请求必须真的从板体切出孔——不是只造了切刀库没接线。"""
+    rect = [Vec2(105.0, 128.5), Vec2(205.0, 128.5),
+            Vec2(205.0, 148.5), Vec2(105.0, 148.5)]
+
+    def make(fhs):
+        board = BoardConfig(shape="rect", thickness=25, embed_depth=22.0,
+                            size_mode="custom", width_mm=240, height_mm=100, corner_r=5.0)
+        tool = Tool(id="t1", outer=rect, finger_holes=fhs)
+        return generate_insert(Project(tools=[tool], board=board))
+
+    r0 = make([])
+    fh = FingerHole(id="fh1", x=155.0, y=118.5, shape="cylinder",
+                    radius=6.0, depth=22.0, depth_mode="blind")
+    r1 = make([fh])
+    cut_delta = r0["base"].volume() - r1["base"].volume()
+    assert cut_delta == pytest.approx(math.pi * 6.0**2 * 22.0, rel=0.02)
+    assert r1["tools"][0]["finger_holes"] == [{"id": "fh1", "shape": "cylinder"}]
