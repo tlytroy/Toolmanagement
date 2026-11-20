@@ -101,6 +101,10 @@ def main() -> int:
     findings: list[tuple[str, str, int, str]] = []
 
     for rel in files:
+        # This guard literally contains the patterns it scans for, so it would
+        # always flag itself once tracked. Skip its own path.
+        if rel.replace("\\", "/") == "scripts/check_no_secrets.py":
+            continue
         if Path(rel).suffix.lower() in SKIP_SUFFIX:
             continue
         if any(part in SKIP_DIRS for part in Path(rel).parts):
