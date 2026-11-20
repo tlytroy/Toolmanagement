@@ -15,14 +15,14 @@
 |---|---|---|---|
 | 规划 | v1 计划 + SDS v1.3（15.0 人日） | ✅ 定稿 | `docs/planning/v1-plan-v1.3.md`、`v1-sds-v1.3.md`，6 轮审核 |
 | M-1 | 冒烟骨架：槽开口 / 首击在槽底 | ✅ 完成 | `scripts/smoke_geometry.py`、`test_geometry_m1.py`，41 用例 |
-| M0 | 后端跑通 + 毫米链 + 成像 + 自检库 + 统一信封 | ⚠️ **部分完成** | 117 passed；但 SDS §1.1 的「`/api/generate` 返回可用 STL」未达，见 §4 |
+| M0 | 后端跑通 + 毫米链 + 成像 + 自检库 + 统一信封 | ✅ 完成 | 132 passed（含 M1-W 15 个）；`/api/generate` 已由 M1-W 交付，见 §4 |
 | M1 | 几何内核增强（Gridfinity 底座/唇/磁孔、倒角间隙、手孔 6 形态、多轮廓） | ❌ 未开始 | 三个并行 agent 空转/崩溃后已停，零产出 |
-| M1-W | 新建 `/api/*` 端点、把新引擎接上线 | ❌ 未开始 | 我补的实施期里程碑，任务书见 `docs/M1_WIRE_DECISION.md` |
+| M1-W | 新建 `/api/*` 端点、把新引擎接上线 | ✅ 完成 | `python_backend/api/` + `export/`，6 端点全注册；`/api/generate` 端到端出真实 STL + 12 checks；15 wire 测试 + 4 组变异全红；commit `6682e06` |
 | M2 | 前端多工具 / 顶点编辑 / 手孔拖拽 / 参数面板 | ❌ 未开始 | 前端 `src/` 冻结至今 |
 | M3 | 纸角手拖、分块、试切件、DXF 导出 | ❌ 未开始 | |
 | M4 | localStorage、错误边界、删旧引擎、文档纠偏 | ❌ 未开始 | |
 
-粗略完成度：规划 + M0 + M-1 ≈ 35%，剩余 65% 主要是 M1 几何与 M2 前端。
+粗略完成度：规划 + M0 + M-1 + M1-W ≈ 45%，剩余 55% 主要是 M1 几何增强与 M2 前端。端到端最小闭环（rect 模式）已打通：POST /api/generate 返回可用 STL。
 
 ## 3. 已拿到的硬成果（有证据）
 
@@ -37,7 +37,7 @@
 `python_backend/geometry/` 与 `imaging/` 测试全绿，但 `main.py` / `cad_engine.py` **都不 import 它们**。线上 `/detect-paper` 仍用 `latest_paper_detection.py`、`/generate-cad` 仍用 `cad_engine.py`。
 **这是定稿漏洞**：SDS §1.1 写「后端能在 WSL 里跑起来，`POST /api/generate` 返回可用 STL | M0」，但 plan M0 表格与 SDS §12.1 的 M1 三路分工都没有"建端点"这一任务。
 **裁决**：不回改六轮审核定稿（保持基线完整），实施期补 **M1-W** 作为 M2 硬前置；旧 8 个端点全部保留、M1-W 只新增 `/api/*`、`GEO_ENGINE=new|legacy` 只影响新端点内部；`cad_engine.py` 与旧端点删除留到 M4。旧端点不因 new 开关改变行为。
-**M0 因此按 §10 Definition of Done 应记为 partially complete**，直到 M1-W 交付 `/api/generate`。
+**M0 曾按 §10 记为 partially complete；M1-W 已交付 `/api/generate`（commit `6682e06`），M0 随之升为完成。**
 
 ### 4.2 带条件豁免：sam_tool_contour +3.4mm
 `test_golden_m0.py::test_golden_synthetic_photo_absolute_size_known_defect` 是 `xfail(strict=True)`。遗留分割器 `sam_tool_contour.py` 的固定像素膨胀（`dk=31px`/`dk=15px`，10px/mm 下约 +3.4mm）无腐蚀补偿，实测 100×60mm 真值 → 槽 103.4×63.3mm，超 SDS §10.3 的 ±0.5mm。
@@ -51,7 +51,7 @@
 
 ## 5. 下一步（按依赖顺序）
 
-1. **M1-W 接线**：把 `geometry.generate_insert` / `imaging` 接到新建的 `/api/*` 端点；任务书 `docs/M1_WIRE_DECISION.md`（需在仓库内落盘，见 §6）。
+1. ~~**M1-W 接线**~~ ✅ 已完成（6 个 `/api/*` 端点已上线，见里程碑台账）。
 2. **M1 几何增强**：Gridfinity 板体（`board.py` 当前 `build_board` 对 gridfinity 抛 `NOT_IMPLEMENTED_M1`）、倒角凸包采样验证、手孔 6 形态、多轮廓。建议拆成"每 10 分钟必须落盘一个最小文件"的小任务派发（大 agent 多次空转）。
 3. M1 整体独立审核 → M2 / M3 / M4。
 
