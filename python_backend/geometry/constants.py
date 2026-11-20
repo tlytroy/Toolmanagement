@@ -37,6 +37,9 @@ MAGNET_DEPTH = 2.4
 # 注：tracefinity 注释 MAGNET_INSET=4.8 指「孔边到格角」（8 - 6.5/2 = 4.75≈4.8），
 # **不参与定位**；「距格角 4.8」与「孔心距 26」算术互斥（42 - 2*4.8 = 32.4 ≠ 26）。
 
+# 手孔形态判据（SDS §7.4 / §6.4）：生效 depth 的连续阈值，与板厚无关
+FINGER_REACH_MM = 20.0   # 指腹可达深度：< 20 只能 scoop，>= 20 可用五种竖直孔
+
 # 剖面/ cutter 采样精度
 CIRCLE_SEGS = 48      # 2D 圆角矩形剖面每段点数
 ROUND_SEGS = 128      # 3D 圆柱/球 circular_segments
